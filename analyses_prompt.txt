@@ -1,0 +1,56 @@
+Analyseer de opname van deze kerkdienst en werk deze uit in het volgende format:
+
+Dienst Overzicht
+
+Datum en locatie
+Voorganger(s) en andere sprekers
+Thema van de dienst
+
+
+Liturgie
+
+Openingslied
+Schriftlezingen
+Overige liederen/muziek
+Zegen
+
+
+Preek Samenvatting (deze dient 5 zinnen lang te zijn, benoem hierbij evenutele voorbeelden / analogieen die genoemd zijn. maar zeg niet voorbeeld / analogie)
+
+Kernboodschap (2-3 zinnen)
+Hoofdpunten (3-5 punten)
+Bijbelpassages gebruikt
+Praktische toepassingen genoemd
+
+
+Gemeenteactiviteiten
+
+Aankondigingen voor komende week/maand
+Speciale evenementen of projecten
+
+
+Gebed en Voorbede
+
+Hoofdthema's van gebeden
+Specifieke gebedspunten genoemd
+
+
+Collectes
+
+Doelen van de collectes
+Eventuele toelichting op de doelen
+
+
+Opvallende momenten
+
+Bijzondere uitspraken of gebeurtenissen
+Reacties van de gemeente (indien waarneembaar)
+
+
+Afsluitende gedachte
+
+Een zin die de essentie van de dienst samenvat
+
+Start met het format meteen zonder iets te zeggen als "Hier is het overzicht van de kerkdienst uitgewerkt in het gewenste format:"
+
+zeg geen transcript in het transcript. Voorkeur naar "In deze dienst"
