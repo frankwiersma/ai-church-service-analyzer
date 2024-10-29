@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+
 # Retrieve variables from .env file
 ROOT_FOLDER = os.path.join(os.getcwd(), 'recordings')
 download_filter = True
@@ -19,10 +20,29 @@ DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 authorization_token = os.getenv('AUTHORIZATION_TOKEN')
 
+
+# List of URLs for different churches
+API_URLS = {
+    "Wijngaarden": "https://api.kerkdienstgemist.nl/api/v2/stations/1306/recordings",
+    "Nieuwe Kerk Utrecht": "https://api.kerkdienstgemist.nl/api/v2/stations/1341/recordings"
+}
+
+def select_church():
+    print("Select a church to download recordings from:")
+    for idx, church in enumerate(API_URLS, start=1):
+        print(f"{idx}. {church}")
+    
+    choice = int(input("Enter the number of the church: ")) - 1
+    selected_church = list(API_URLS.keys())[choice]
+    return API_URLS[selected_church], selected_church
+
 def main():
     session = requests.Session()
-    api_base_url = 'https://api.kerkdienstgemist.nl/api/v2/stations/1341/recordings'
-    
+    # Let the user select the church
+    api_base_url, selected_church = select_church()
+    print(f"Selected church: {selected_church}")
+
+
     print("📡 Using provided authorization token...")
     headers = {
         'Accept': 'application/vnd.api+json',
