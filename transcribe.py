@@ -37,35 +37,39 @@ cancellation_flags = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Reset cancellation flag for the new session
-    cancellation_flags[update.message.chat_id] = False
+    chat_id = update.message.chat_id if update.message else update.callback_query.message.chat_id
+    cancellation_flags[chat_id] = False
     keyboard = []
     for church in API_URLS.keys():
         keyboard.append([InlineKeyboardButton(church, callback_data=f"church_{church}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
         await update.message.reply_text(
-            "⛪ Welkom! Selecteer een kerk om de laatste preek te analyseren:",
+            "⛪ Welkom! Selecteer een kerk:",
             reply_markup=reply_markup
         )
     else:
         await update.callback_query.message.reply_text(
-            "⛪ Welkom! Selecteer een kerk om de laatste preek te analyseren:",
+            "⛪ Welkom! Selecteer een kerk:",
             reply_markup=reply_markup
         )
 
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     
+    # Answer the callback query immediately to prevent timeout issues
+    await query.answer()
+
     if query.data.startswith("church_"):
         church = query.data.replace("church_", "")
-        # Add a cancel button when listing services
         await query.edit_message_text(
             f"🔄 Beschikbare preken van {church} worden opgehaald...",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
         )
         
         try:
+            # Fetch services asynchronously in the background
             services_by_date = await fetch_church_services(API_URLS[church], query)
             if services_by_date:
                 keyboard = [[InlineKeyboardButton(date, callback_data=f"date_{church}_{date}")]
@@ -106,11 +110,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
         )
 
+        # Process service asynchronously to avoid blocking the query response
         try:
-            # Start processing with cancel check
-            if cancellation_flags[query.message.chat_id]:
-                await query.edit_message_text("🚫 Verwerking geannuleerd.")
-                return
             analysis = await process_selected_service(API_URLS[church], service_id, query)
             if cancellation_flags[query.message.chat_id]:
                 await query.edit_message_text("🚫 Verwerking geannuleerd.")
@@ -122,8 +123,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "cancel":
         # Set cancellation flag and return to start
         cancellation_flags[query.message.chat_id] = True
-        await query.edit_message_text("🔙 Bewerking wordt geannuleerd...")
+        await query.edit_message_text("🔙 Bewerking wordt geannuleerd... Terug naar start.")
+        
+        # Redirect to the start command to reset the process
         await start(update, context)
+
 
 
 
@@ -211,10 +215,16 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     title = attributes.get('title', 'Untitled')
     start_time = attributes.get('start_at', '')
 
-    # Calculate the date string and maintain it throughout the code
     date_str = parse_date(start_time)
     folder_name = sanitize_filename(f"{date_str}_{title}")
     recording_folder = os.path.join(ROOT_FOLDER, folder_name)
+
+    # Check if analysis.txt already exists
+    analysis_filename = os.path.join(recording_folder, 'analysis.txt')
+    if os.path.exists(analysis_filename):
+        with open(analysis_filename, 'r') as f:
+            analysis_text = f.read()
+        return analysis_text  # Present existing analysis if available
 
     if not os.path.exists(recording_folder):
         os.makedirs(recording_folder)
@@ -254,7 +264,6 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
 
     # Analysis generation
     await query.edit_message_text("🤖 Analyse wordt gegenereerd...")
-    analysis_filename = os.path.join(recording_folder, 'analysis.txt')
     await asyncio.get_event_loop().run_in_executor(
         None,
         generate_analysis,
@@ -266,6 +275,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         analysis_text = f.read()
 
     return analysis_text
+
 
 # Your existing utility functions remain the same
 def parse_date(start_time):
@@ -379,7 +389,7 @@ def transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_fil
             response_data = response.to_dict()
             with open(transcription_filename, 'w') as f:
                 json.dump(response_data, f, indent=4)
-            print(f"✅ Full Deepgram response saved to {transcription_filename}")
+            print(f"✅ Volledige Deepgram-reactie opgeslagen naar {transcription_filename}")
 
             transcript = ''
             channels = response_data.get('results', {}).get('channels', [])
@@ -391,11 +401,11 @@ def transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_fil
             if transcript:
                 with open(extracted_filename, 'w') as f:
                     f.write(transcript)
-                print(f"✅ Extracted transcript saved to {extracted_filename}")
+                print(f"✅ Getranscribeerde tekst opgeslagen naar {extracted_filename}")
             else:
-                print("❌ Transcript not found in the provided JSON data.")
+                print("❌ Transcript niet gevonden in de gegeven JSON-data.")
     except Exception as e:
-        print(f"❌ Operation failed: {e}")
+        print(f"❌ Operatie mislukt: {e}")
 
 async def main():
     # Create the application
@@ -405,8 +415,8 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
     
-    # Start the bot
-    print("Starting bot...")
+    # Start de bot
+    print("Bot wordt gestart...")
     await application.initialize()
     await application.start()
     await application.run_polling(allowed_updates=Update.ALL_TYPES)
@@ -416,10 +426,10 @@ def load_analysis_prompt():
     try:
         with open(prompt_file, 'r') as file:
             prompt = file.read()
-            print(f"📄 Loaded analysis prompt from {prompt_file}")
+            print(f"📄 Analyseprompt geladen uit {prompt_file}")
             return prompt
     except Exception as e:
-        print(f"❌ Failed to load analysis prompt: {e}")
+        print(f"❌ Laden van analyseprompt mislukt: {e}")
         return None
 
 def generate_analysis(extracted_filename, analysis_filename):
@@ -429,7 +439,7 @@ def generate_analysis(extracted_filename, analysis_filename):
         
         prompt_template = load_analysis_prompt()
         if not prompt_template:
-            print("❌ Analysis prompt not loaded. Skipping analysis.")
+            print("❌ Analyseprompt niet geladen. Analyse wordt overgeslagen.")
             return
         prompt = f"{prompt_template}\n\nTranscript:\n{transcript}"
         genai.configure(api_key=GEMINI_API_KEY)
@@ -438,27 +448,27 @@ def generate_analysis(extracted_filename, analysis_filename):
         if result and result.text:
             with open(analysis_filename, 'w') as f:
                 f.write(result.text)
-            print(f"✅ Analysis saved to {analysis_filename}")
+            print(f"✅ Analyse opgeslagen naar {analysis_filename}")
         else:
-            print("❌ Failed to generate analysis.")
+            print("❌ Genereren van analyse mislukt.")
     except Exception as e:
-        print(f"❌ Analysis generation failed: {e}")
+        print(f"❌ Genereren van analyse mislukt: {e}")
 
 def run_application():
     """Run the application in a synchronous context"""
-    # Create the application
+    # Maak de applicatie aan
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Add handlers
+    # Voeg handlers toe
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
     
-    # Start the bot (this handles its own event loop)
-    print("Starting bot...")
+    # Start de bot (deze handelt zijn eigen event loop af)
+    print("Bot wordt gestart...")
     application.run_polling(poll_interval=1.0, timeout=20)
 
 if __name__ == '__main__':
     try:
         run_application()
     except KeyboardInterrupt:
-        print("Bot stopped by user")
+        print("Bot gestopt door gebruiker")
