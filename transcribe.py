@@ -31,10 +31,17 @@ API_URLS = {
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(church, callback_data=f"church_{church}") for church in API_URLS.keys()]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🏛️ Welcome! Please select a church to analyze the latest sermon:",
-        reply_markup=reply_markup
-    )
+    
+    if update.message:
+        await update.message.reply_text(
+            "🏛️ Welcome! Please select a church to analyze the latest sermon:",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.callback_query.message.reply_text(
+            "🏛️ Welcome! Please select a church to analyze the latest sermon:",
+            reply_markup=reply_markup
+        )
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -42,16 +49,93 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data.startswith("church_"):
         church = query.data.replace("church_", "")
-        await query.edit_message_text(f"🔄 Processing latest sermon from {church}...")
+        await query.edit_message_text(f"🔄 Fetching available sermons from {church}...")
+        
+        try:
+            services_by_date = await fetch_church_services(API_URLS[church], query)
+            if services_by_date:
+                keyboard = [[InlineKeyboardButton(date, callback_data=f"date_{church}_{date}")]
+                            for date in services_by_date.keys()]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    f"📅 Please select a date for the sermon from {church}:",
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_text("❌ No services found for this church.")
+        except Exception as e:
+            await query.edit_message_text(f"❌ An error occurred: {str(e)}")
+
+    elif query.data.startswith("date_"):
+        _, church, date = query.data.split("_", 2)
+        services_by_date = await fetch_church_services(API_URLS[church], query)
+        services = services_by_date.get(date, [])
+
+        if services:
+            keyboard = [[InlineKeyboardButton(service["title"], callback_data=f"service_{church}_{service['id']}")]
+                        for service in services]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                f"🕒 Please select the specific service for {date}:",
+                reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_text("❌ No services found for this date.")
+
+    elif query.data.startswith("service_"):
+        _, church, service_id = query.data.split("_", 2)
+        await query.edit_message_text(f"🔄 Processing selected sermon from {church}...")
 
         try:
-            analysis = await process_church(API_URLS[church], church, query)
+            analysis = await process_selected_service(API_URLS[church], service_id, query)
             await handle_analysis_response(query, analysis, church, context)
         except Exception as e:
             await query.edit_message_text(f"❌ An error occurred: {str(e)}")
 
     elif query.data == "start":
-        await start(update, context)
+        await start(query, context)
+
+
+
+async def fetch_church_services(api_url: str, query: Update.callback_query):
+    session = requests.Session()
+    headers = {
+        'Accept': 'application/vnd.api+json',
+        'Authorization': f'Bearer {authorization_token}',
+    }
+    params = {
+        'include': 'media',
+        'page': 1,
+        'size': 5  # Adjust this number to control how many services are displayed
+    }
+
+    # Run blocking operations in a thread pool
+    api_response = await asyncio.get_event_loop().run_in_executor(
+        None, 
+        lambda: session.get(api_url, headers=headers, params=params)
+    )
+    api_response.raise_for_status()
+    data = api_response.json()
+    recordings = data.get('data', [])
+
+    services_by_date = {}
+    for recording in recordings:
+        attributes = recording.get('attributes', {})
+        service_id = recording.get('id')
+        title = attributes.get('title', 'Untitled')
+        start_time = attributes.get('start_at', '')
+
+        date_str = parse_date(start_time)
+        if date_str not in services_by_date:
+            services_by_date[date_str] = []
+        
+        services_by_date[date_str].append({
+            "id": service_id,
+            "title": title,
+            "date": date_str
+        })
+
+    return services_by_date
 
 async def handle_analysis_response(query, analysis, church, context):
     if analysis:
@@ -73,35 +157,28 @@ async def handle_analysis_response(query, analysis, church, context):
         await query.edit_message_text("❌ Failed to generate analysis. Please try again.")
 
 # Modified process_church to handle blocking operations properly
-async def process_church(api_url: str, church_name: str, query: Update.callback_query) -> str:
+async def process_selected_service(api_url: str, service_id: str, query: Update.callback_query) -> str:
     session = requests.Session()
     headers = {
         'Accept': 'application/vnd.api+json',
         'Authorization': f'Bearer {authorization_token}',
     }
-    params = {
-        'include': 'media',
-        'page': 1,
-        'size': 1
-    }
 
-    await query.edit_message_text(f"🔍 Fetching latest recording from {church_name}...")
-
-    # Run blocking operations in a thread pool
+    # Fetch specific service
+    await query.edit_message_text("🔍 Fetching selected recording...")
     api_response = await asyncio.get_event_loop().run_in_executor(
-        None, 
-        lambda: session.get(api_url, headers=headers, params=params)
+        None,
+        lambda: session.get(f"{api_url}/{service_id}", headers=headers)
     )
     api_response.raise_for_status()
     data = api_response.json()
-    recordings = data.get('data', [])
-    
-    if not recordings:
-        return "No recordings found."
+    recording = data.get('data')
 
-    recording = recordings[0]
+    # Process the specific recording (same as in process_church)
+    if not recording:
+        return "No recording found for the selected service."
+
     included_media = data.get('included', [])
-    
     attributes = recording.get('attributes', {})
     title = attributes.get('title', 'Untitled')
     start_time = attributes.get('start_at', '')
@@ -109,7 +186,7 @@ async def process_church(api_url: str, church_name: str, query: Update.callback_
     date_str = parse_date(start_time)
     folder_name = sanitize_filename(f"{date_str}_{title}")
     recording_folder = os.path.join(ROOT_FOLDER, folder_name)
-    
+
     if not os.path.exists(recording_folder):
         os.makedirs(recording_folder)
 
@@ -118,7 +195,7 @@ async def process_church(api_url: str, church_name: str, query: Update.callback_
     if not download_url:
         return "No download URL found for the recording."
 
-    await query.edit_message_text(f"⬇️ Downloading recording from {church_name}...")
+    await query.edit_message_text(f"⬇️ Downloading recording...")
     mp4_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
 
@@ -154,14 +231,14 @@ async def process_church(api_url: str, church_name: str, query: Update.callback_
 
     await query.edit_message_text("🤖 Generating analysis...")
     analysis_filename = os.path.join(recording_folder, 'analysis.txt')
-    
+
     await asyncio.get_event_loop().run_in_executor(
         None,
         generate_analysis,
         extracted_filename,
         analysis_filename
     )
-    
+
     with open(analysis_filename, 'r') as f:
         analysis_text = f.read()
 
