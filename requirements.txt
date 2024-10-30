@@ -1,0 +1,6 @@
+requests
+google-generativeai
+moviepy
+python-dotenv
+python-telegram-bot
+deepgram-sdk
