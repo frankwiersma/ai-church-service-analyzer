@@ -38,17 +38,18 @@ cancellation_flags = {}
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Reset cancellation flag for the new session
     cancellation_flags[update.message.chat_id] = False
-    keyboard = [[InlineKeyboardButton(church, callback_data=f"church_{church}") for church in API_URLS.keys()]]
+    keyboard = []
+    for church in API_URLS.keys():
+        keyboard.append([InlineKeyboardButton(church, callback_data=f"church_{church}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     if update.message:
         await update.message.reply_text(
-            "🏛️ Welcome! Please select a church to analyze the latest sermon:",
+            "⛪ Welcome! Please select a church to analyze the latest sermon:",
             reply_markup=reply_markup
         )
     else:
         await update.callback_query.message.reply_text(
-            "🏛️ Welcome! Please select a church to analyze the latest sermon:",
+            "⛪ Welcome! Please select a church to analyze the latest sermon:",
             reply_markup=reply_markup
         )
 
