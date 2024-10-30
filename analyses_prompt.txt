@@ -54,3 +54,7 @@ Een zin die de essentie van de dienst samenvat
 Start met het format meteen zonder iets te zeggen als "Hier is het overzicht van de kerkdienst uitgewerkt in het gewenste format:"
 
 zeg geen transcript in het transcript. Voorkeur naar "In deze dienst"
+
+A few emojis at the start of the headings 
+
+and it needs to be formatted using the telegram styling things. (not too much)

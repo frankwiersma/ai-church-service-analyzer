@@ -1,25 +1,26 @@
-import json
-import requests
+import asyncio
 import os
+import requests
+import json
 from datetime import datetime
-from moviepy.editor import VideoFileClip
 import google.generativeai as genai
-from deepgram import DeepgramClient, PrerecordedOptions
+from moviepy.editor import VideoFileClip
 from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ApplicationBuilder
+from deepgram import DeepgramClient, PrerecordedOptions
 
 # Load environment variables
 load_dotenv()
 
-
 # Retrieve variables from .env file
 ROOT_FOLDER = os.path.join(os.getcwd(), 'recordings')
-download_filter = True
 recent_amount = int(os.getenv('RECENT_AMOUNT', 1))
 transcription_service = os.getenv('TRANSCRIPTION_SERVICE', 'deepgram')
 DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 authorization_token = os.getenv('AUTHORIZATION_TOKEN')
-
 
 # List of URLs for different churches
 API_URLS = {
@@ -27,141 +28,190 @@ API_URLS = {
     "Nieuwe Kerk Utrecht": "https://api.kerkdienstgemist.nl/api/v2/stations/1341/recordings"
 }
 
-def select_church():
-    print("Select a church to download recordings from:")
-    for idx, church in enumerate(API_URLS, start=1):
-        print(f"{idx}. {church}")
-    
-    choice = int(input("Enter the number of the church: ")) - 1
-    selected_church = list(API_URLS.keys())[choice]
-    return API_URLS[selected_church], selected_church
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton(church, callback_data=f"church_{church}") for church in API_URLS.keys()]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🏛️ Welcome! Please select a church to analyze the latest sermon:",
+        reply_markup=reply_markup
+    )
 
-def main():
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data.startswith("church_"):
+        church = query.data.replace("church_", "")
+        await query.edit_message_text(f"🔄 Processing latest sermon from {church}...")
+
+        try:
+            analysis = await process_church(API_URLS[church], church, query)
+            await handle_analysis_response(query, analysis, church, context)
+        except Exception as e:
+            await query.edit_message_text(f"❌ An error occurred: {str(e)}")
+
+    elif query.data == "start":
+        await start(update, context)
+
+async def handle_analysis_response(query, analysis, church, context):
+    if analysis:
+        max_length = 4096
+        messages = [analysis[i:i+max_length] for i in range(0, len(analysis), max_length)]
+        for i, message in enumerate(messages):
+            if i == 0:
+                await query.edit_message_text(f"📊 Analysis for {church}:\n\n{message}")
+            else:
+                await context.bot.send_message(chat_id=query.message.chat_id, text=message)
+        keyboard = [[InlineKeyboardButton("Analyze another sermon", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="Would you like to analyze another sermon?",
+            reply_markup=reply_markup
+        )
+    else:
+        await query.edit_message_text("❌ Failed to generate analysis. Please try again.")
+
+# Modified process_church to handle blocking operations properly
+async def process_church(api_url: str, church_name: str, query: Update.callback_query) -> str:
     session = requests.Session()
-    # Let the user select the church
-    api_base_url, selected_church = select_church()
-    print(f"Selected church: {selected_church}")
-
-
-    print("📡 Using provided authorization token...")
     headers = {
         'Accept': 'application/vnd.api+json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' \
-                      'AppleWebKit/537.36 (KHTML, like Gecko) ' \
-                      'Chrome/130.0.0.0 Safari/537.36',
         'Authorization': f'Bearer {authorization_token}',
     }
     params = {
         'include': 'media',
         'page': 1,
-        'size': 10
+        'size': 1
     }
-    recordings_downloaded = 0
+
+    await query.edit_message_text(f"🔍 Fetching latest recording from {church_name}...")
+
+    # Run blocking operations in a thread pool
+    api_response = await asyncio.get_event_loop().run_in_executor(
+        None, 
+        lambda: session.get(api_url, headers=headers, params=params)
+    )
+    api_response.raise_for_status()
+    data = api_response.json()
+    recordings = data.get('data', [])
     
+    if not recordings:
+        return "No recordings found."
+
+    recording = recordings[0]
+    included_media = data.get('included', [])
+    
+    attributes = recording.get('attributes', {})
+    title = attributes.get('title', 'Untitled')
+    start_time = attributes.get('start_at', '')
+
+    date_str = parse_date(start_time)
+    folder_name = sanitize_filename(f"{date_str}_{title}")
+    recording_folder = os.path.join(ROOT_FOLDER, folder_name)
+    
+    if not os.path.exists(recording_folder):
+        os.makedirs(recording_folder)
+
+    download_url = get_download_url(recording, included_media)
+
+    if not download_url:
+        return "No download URL found for the recording."
+
+    await query.edit_message_text(f"⬇️ Downloading recording from {church_name}...")
+    mp4_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
+    mp3_filename = mp4_filename.replace('.mp4', '.mp3')
+
+    if not os.path.exists(mp4_filename):
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            download_file,
+            session,
+            download_url,
+            mp4_filename
+        )
+
+    if not os.path.exists(mp3_filename):
+        await query.edit_message_text("🎵 Converting video to audio...")
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            convert_to_mp3,
+            mp4_filename
+        )
+
+    transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
+    extracted_filename = mp3_filename.replace('.mp3', '.txt')
+
+    if not os.path.exists(transcription_filename):
+        await query.edit_message_text("🎙️ Transcribing audio...")
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            transcribe_audio,
+            mp3_filename,
+            transcription_filename,
+            extracted_filename
+        )
+
+    await query.edit_message_text("🤖 Generating analysis...")
+    analysis_filename = os.path.join(recording_folder, 'analysis.txt')
+    
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        generate_analysis,
+        extracted_filename,
+        analysis_filename
+    )
+    
+    with open(analysis_filename, 'r') as f:
+        analysis_text = f.read()
+
+    return analysis_text
+
+# Your existing utility functions remain the same
+def parse_date(start_time):
+    try:
+        date_obj = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%S%z')
+        return date_obj.strftime('%Y-%m-%d')
+    except ValueError:
+        return start_time[:10]
+
+def get_download_url(recording, included_media):
+    relationships = recording.get('relationships', {})
+    media_data = relationships.get('media', {}).get('data', [])
+    media_ids = {m['id'] for m in media_data}
+
+    for media_item in included_media:
+        if media_item['id'] in media_ids and media_item['type'] == 'video_files':
+            return media_item.get('attributes', {}).get('download_url', '')
+    return None
+
+def download_file(session, url, filename):
+    with session.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(filename, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+def convert_to_mp3(mp4_filename):
+    mp3_filename = mp4_filename.replace('.mp4', '.mp3')
+    video_clip = VideoFileClip(mp4_filename)
+    audio_clip = video_clip.audio
+    audio_clip.write_audiofile(mp3_filename)
+    audio_clip.close()
+    video_clip.close()
+    return mp3_filename
+
+def sanitize_filename(filename):
+    invalid_chars = r'<>:"/\|?*'
+    for char in invalid_chars:
+        filename = filename.replace(char, '')
+    return filename.replace(' ', '_')
+
+def transcribe_audio(mp3_filename, transcription_filename, extracted_filename):
     if transcription_service == 'gemini':
-        genai.configure(api_key=GEMINI_API_KEY)
-    
-    try:
-        while True:
-            print(f"📄 Fetching recordings from API (Page {params['page']})...")
-            api_response = session.get(api_base_url, headers=headers, params=params)
-            api_response.raise_for_status()
-            data = api_response.json()
-            recordings = data.get('data', [])
-            if not recordings:
-                print("❌ No more recordings found. Stopping.")
-                break
-
-            included_media = data.get('included', [])
-            for recording in recordings:
-                if download_filter and recordings_downloaded >= recent_amount:
-                    print(f"✅ Downloaded the last {recent_amount} recordings. Stopping.")
-                    return
-
-                attributes = recording.get('attributes', {})
-                title = attributes.get('title', 'Untitled')
-                start_time = attributes.get('start_at', '')
-
-                relationships = recording.get('relationships', {})
-                media = relationships.get('media', {})
-                media_data = media.get('data', [])
-                download_url = ''
-                if media_data and included_media:
-                    media_ids = [m['id'] for m in media_data]
-                    for media_item in included_media:
-                        if media_item['id'] in media_ids and media_item['type'] == 'video_files':
-                            media_attributes = media_item.get('attributes', {})
-                            download_url = media_attributes.get('download_url', '')
-                            if download_url:
-                                break
-
-                try:
-                    date_obj = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%S%z')
-                    date_str = date_obj.strftime('%Y-%m-%d')
-                except ValueError:
-                    date_str = start_time[:10]
-
-                folder_name = sanitize_filename(f"{date_str}_{title}")
-                recording_folder = os.path.join(ROOT_FOLDER, folder_name)
-
-                if not os.path.exists(recording_folder):
-                    os.makedirs(recording_folder)
-                    print(f"📁 Created folder: {recording_folder}")
-
-                mp4_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
-                mp3_filename = mp4_filename.replace('.mp4', '.mp3').replace(' ', '_')
-
-                if not os.path.exists(mp4_filename):
-                    if download_url:
-                        print(f"🎬 Found new download URL. Downloading {mp4_filename}...")
-                        download_file(session, download_url, mp4_filename)
-                    else:
-                        print(f"❌ No download URL found for {title}. Skipping.")
-                        continue
-                else:
-                    print(f"ℹ️ File {mp4_filename} already exists. Skipping download.")
-
-                if not os.path.exists(mp3_filename):
-                    print(f"🎶 MP3 version not found for {mp4_filename}. Converting...")
-                    mp3_filename = convert_to_mp3(mp4_filename)
-                    print(f"🎶 MP3 version saved as {mp3_filename}")
-                else:
-                    print(f"ℹ️ MP3 file {mp3_filename} already exists. Skipping conversion.")
-
-                transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
-                extracted_filename = transcription_filename.replace('_full.txt', '.txt')
-                print("this is extracted filename: "+ extracted_filename)
-                if not os.path.exists(transcription_filename):
-                    print(f"📝 Transcription not found for {mp3_filename}. Transcribing...")
-                    if transcription_service == 'gemini':
-                        transcribe_with_gemini(mp3_filename, transcription_filename)
-                    elif transcription_service == 'deepgram':
-                        transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_filename)
-                else:
-                    print(f"ℹ️ Transcription file {transcription_filename} already exists. Skipping transcription.")
-
-                analysis_filename = os.path.join(recording_folder, 'analysis.txt')
-                generate_analysis(extracted_filename, analysis_filename)
-                recordings_downloaded += 1
-            params['page'] += 1
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Error fetching page {params['page']}: {e}")
-    except Exception as e:
-        print(f"❌ An unexpected error occurred: {e}")
-
-def transcribe_with_gemini(mp3_filename, transcription_filename):
-    try:
-        myfile = genai.upload_file(mp3_filename)
-        model = genai.GenerativeModel("gemini-1.5-flash-8b")
-        result = model.generate_content([myfile, "Transcribeer deze opname."])
-        if result and result.text:
-            with open(transcription_filename, 'w') as f:
-                f.write(result.text)
-            print(f"✅ Transcription saved to {transcription_filename}")
-        else:
-            print(f"❌ Failed to transcribe {mp3_filename} with Gemini.")
-    except Exception as e:
-        print(f"❌ Gemini transcription failed: {e}")
+        transcribe_with_gemini(mp3_filename, transcription_filename)
+    elif transcription_service == 'deepgram':
+        transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_filename)
 
 def transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_filename):
     try:
@@ -191,6 +241,20 @@ def transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_fil
                 print("❌ Transcript not found in the provided JSON data.")
     except Exception as e:
         print(f"❌ Operation failed: {e}")
+
+async def main():
+    # Create the application
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button))
+    
+    # Start the bot
+    print("Starting bot...")
+    await application.initialize()
+    await application.start()
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 def load_analysis_prompt():
     prompt_file = os.path.join(os.path.dirname(__file__), 'analyses_prompt.txt')
@@ -225,41 +289,21 @@ def generate_analysis(extracted_filename, analysis_filename):
     except Exception as e:
         print(f"❌ Analysis generation failed: {e}")
 
-def download_file(session, url, filename):
-    try:
-        print(f"⬇️ Downloading {filename} from {url}")
-        with session.get(url, stream=True) as r:
-            r.raise_for_status()
-            with open(filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        print(f"✅ Download complete: {filename}")
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to download {filename}: {e}")
-
-def convert_to_mp3(mp4_filename):
-    mp3_filename = mp4_filename.replace('.mp4', '.mp3')
-    if not os.path.exists(mp3_filename):
-        try:
-            print(f"🔄 Converting {mp4_filename} to {mp3_filename}...")
-            video_clip = VideoFileClip(mp4_filename)
-            audio_clip = video_clip.audio
-            audio_clip.write_audiofile(mp3_filename)
-            audio_clip.close()
-            video_clip.close()
-            print(f"✅ Conversion complete: {mp3_filename}")
-        except Exception as e:
-            print(f"❌ Failed to convert {mp4_filename} to MP3: {e}")
-    else:
-        print(f"ℹ️ MP3 file {mp3_filename} already exists. Skipping conversion.")
-    return mp3_filename
-
-def sanitize_filename(filename):
-    invalid_chars = r'<>:"/\|?*'
-    for char in invalid_chars:
-        filename = filename.replace(char, '')
-    filename = filename.replace(' ', '_')
-    return filename
+def run_application():
+    """Run the application in a synchronous context"""
+    # Create the application
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button))
+    
+    # Start the bot (this handles its own event loop)
+    print("Starting bot...")
+    application.run_polling(poll_interval=1.0, timeout=20)
 
 if __name__ == '__main__':
-    main()
+    try:
+        run_application()
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
