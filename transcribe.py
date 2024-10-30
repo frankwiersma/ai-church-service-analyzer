@@ -32,7 +32,12 @@ API_URLS = {
     "Elimkerk Hendrik-Ido-Ambacht": BASE_URL.format("876")
 }
 
+# Define a global dictionary to store cancellation requests for each chat
+cancellation_flags = {}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Reset cancellation flag for the new session
+    cancellation_flags[update.message.chat_id] = False
     keyboard = [[InlineKeyboardButton(church, callback_data=f"church_{church}") for church in API_URLS.keys()]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -50,16 +55,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
+    
     if query.data.startswith("church_"):
         church = query.data.replace("church_", "")
-        await query.edit_message_text(f"🔄 Fetching available sermons from {church}...")
+        # Add a cancel button when listing services
+        await query.edit_message_text(
+            f"🔄 Fetching available sermons from {church}...",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel")]])
+        )
         
         try:
             services_by_date = await fetch_church_services(API_URLS[church], query)
             if services_by_date:
                 keyboard = [[InlineKeyboardButton(date, callback_data=f"date_{church}_{date}")]
                             for date in services_by_date.keys()]
+                keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(
                     f"📅 Please select a date for the sermon from {church}:",
@@ -78,6 +88,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if services:
             keyboard = [[InlineKeyboardButton(service["title"], callback_data=f"service_{church}_{service['id']}")]
                         for service in services]
+            keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 f"🕒 Please select the specific service for {date}:",
@@ -88,16 +99,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data.startswith("service_"):
         _, church, service_id = query.data.split("_", 2)
-        await query.edit_message_text(f"🔄 Processing selected sermon from {church}...")
+        cancellation_flags[query.message.chat_id] = False
+        await query.edit_message_text(
+            f"🔄 Processing selected sermon from {church}...",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel")]])
+        )
 
         try:
+            # Start processing with cancel check
+            if cancellation_flags[query.message.chat_id]:
+                await query.edit_message_text("🚫 Processing canceled.")
+                return
             analysis = await process_selected_service(API_URLS[church], service_id, query)
+            if cancellation_flags[query.message.chat_id]:
+                await query.edit_message_text("🚫 Processing canceled.")
+                return
             await handle_analysis_response(query, analysis, church, context)
         except Exception as e:
             await query.edit_message_text(f"❌ An error occurred: {str(e)}")
 
-    elif query.data == "start":
-        await start(query, context)
+    elif query.data == "cancel":
+        # Set cancellation flag and return to start
+        cancellation_flags[query.message.chat_id] = True
+        await query.edit_message_text("🔙 Canceling operation...")
+        await start(update, context)
 
 
 
@@ -168,7 +193,6 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         'Authorization': f'Bearer {authorization_token}',
     }
 
-    # Fetch specific service
     await query.edit_message_text("🔍 Fetching selected recording...")
     api_response = await asyncio.get_event_loop().run_in_executor(
         None,
@@ -186,6 +210,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     title = attributes.get('title', 'Untitled')
     start_time = attributes.get('start_at', '')
 
+    # Calculate the date string and maintain it throughout the code
     date_str = parse_date(start_time)
     folder_name = sanitize_filename(f"{date_str}_{title}")
     recording_folder = os.path.join(ROOT_FOLDER, folder_name)
@@ -200,13 +225,15 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     mp4_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
 
-    # Download with progress
-    await query.edit_message_text(f"⏬ Downloading recording... 0% complete")
+    # Download with progress and cancel check
     await download_file_with_progress(session, download_url, mp4_filename, query)
+    if cancellation_flags[query.message.chat_id]:
+        return "Operation canceled."
 
-    # Convert to MP3 with progress
-    await query.edit_message_text("🎵 Converting video to audio... 0% complete")
+    # Convert to MP3 with cancel check
     await convert_to_mp3_with_progress(mp4_filename, query)
+    if cancellation_flags[query.message.chat_id]:
+        return "Operation canceled."
 
     transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
     extracted_filename = mp3_filename.replace('.mp3', '.txt')
@@ -221,6 +248,8 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
             transcription_filename,
             extracted_filename
         )
+        if cancellation_flags[query.message.chat_id]:
+            return "Operation canceled."
 
     # Analysis generation
     await query.edit_message_text("🤖 Generating analysis...")
@@ -245,6 +274,7 @@ def parse_date(start_time):
     except ValueError:
         return start_time[:10]
 
+
 def get_download_url(recording, included_media):
     relationships = recording.get('relationships', {})
     media_data = relationships.get('media', {}).get('data', [])
@@ -257,7 +287,7 @@ def get_download_url(recording, included_media):
 
 last_message_data = {}
 
-async def safe_edit_message_text(query, new_text):
+async def safe_edit_message_text(query, new_text, reply_markup=None):
     """Edit message text only if the content has changed and enough time has passed."""
     message_id = query.message.message_id
     chat_id = query.message.chat_id
@@ -268,13 +298,16 @@ async def safe_edit_message_text(query, new_text):
     
     # Only update if the content is new or enough time (e.g., 1 second) has passed
     if new_text != last_text and (current_time - last_timestamp > 1):
-        # Update the message
-        await query.edit_message_text(new_text)
+        # Update the message with optional reply markup
+        await query.edit_message_text(new_text, reply_markup=reply_markup)
         
         # Store the new content and timestamp
         last_message_data[(chat_id, message_id)] = (new_text, current_time)
 
 async def download_file_with_progress(session, url, filename, query):
+    await safe_edit_message_text(query, "⏬ Starting download with cancel option...", 
+                                 InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel")]]))
+    
     with session.get(url, stream=True) as r:
         r.raise_for_status()
         total_length = int(r.headers.get('content-length', 0))
@@ -286,22 +319,38 @@ async def download_file_with_progress(session, url, filename, query):
                     f.write(chunk)
                     downloaded += len(chunk)
                     progress = int((downloaded / total_length) * 100)
-                    # Alternate text with an ellipsis to force uniqueness
-                    update_text = f"⏬ Downloading recording... {progress}% complete" + ("." if progress % 2 == 0 else "")
-                    await safe_edit_message_text(query, update_text)
+                    
+                    # Update progress every 5% to reduce excessive updates
+                    if progress % 5 == 0:
+                        update_text = f"⏬ Downloading recording... {progress}% complete"
+                        await safe_edit_message_text(query, update_text, 
+                                                     InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="cancel")]]))
+                
+                # Check for cancellation at each chunk
+                if cancellation_flags.get(query.message.chat_id):
+                    await query.edit_message_text("🚫 Download canceled. Returning to church listing.")
+                    os.remove(filename)  # Optionally delete the incomplete file
+                    await start(query, None)  # Return to the start
+                    return  # Early exit on cancellation
+
+    await safe_edit_message_text(query, "✅ Download complete!", InlineKeyboardMarkup([]))
+
 
 async def convert_to_mp3_with_progress(mp4_filename, query):
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
     video_clip = VideoFileClip(mp4_filename)
     audio_clip = video_clip.audio
 
-    # Intermediate status update
     await safe_edit_message_text(query, "🎵 Converting video to audio... 50% complete.")
     audio_clip.write_audiofile(mp3_filename, verbose=False, logger=None)
 
-    # Final status update
-    await safe_edit_message_text(query, "🎵 Conversion complete! 100%")
+    if cancellation_flags[query.message.chat_id]:
+        await query.edit_message_text("🚫 Conversion canceled.")
+        video_clip.close()
+        audio_clip.close()
+        return None  # Exit if canceled
 
+    await safe_edit_message_text(query, "🎵 Conversion complete! 100%")
     video_clip.close()
     audio_clip.close()
     return mp3_filename
