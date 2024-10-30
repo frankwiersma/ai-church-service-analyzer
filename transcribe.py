@@ -130,6 +130,7 @@ def main():
 
                 transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
                 extracted_filename = transcription_filename.replace('_full.txt', '.txt')
+                print("this is extracted filename: "+ extracted_filename)
                 if not os.path.exists(transcription_filename):
                     print(f"📝 Transcription not found for {mp3_filename}. Transcribing...")
                     if transcription_service == 'gemini':
@@ -140,7 +141,7 @@ def main():
                     print(f"ℹ️ Transcription file {transcription_filename} already exists. Skipping transcription.")
 
                 analysis_filename = os.path.join(recording_folder, 'analysis.txt')
-                generate_analysis(transcription_filename, analysis_filename)
+                generate_analysis(extracted_filename, analysis_filename)
                 recordings_downloaded += 1
             params['page'] += 1
     except requests.exceptions.RequestException as e:
@@ -206,13 +207,14 @@ def generate_analysis(extracted_filename, analysis_filename):
     try:
         with open(extracted_filename, 'r') as f:
             transcript = f.read()
+        
         prompt_template = load_analysis_prompt()
         if not prompt_template:
             print("❌ Analysis prompt not loaded. Skipping analysis.")
             return
         prompt = f"{prompt_template}\n\nTranscript:\n{transcript}"
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash-8b')
         result = model.generate_content(prompt)
         if result and result.text:
             with open(analysis_filename, 'w') as f:
