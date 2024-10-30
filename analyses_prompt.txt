@@ -58,3 +58,12 @@ zeg geen transcript in het transcript. Voorkeur naar "In deze dienst"
 A few emojis at the start of the headings 
 
 and it needs to be formatted using the telegram styling things. (not too much)
+use this for formatting:
+
+Think of how you show headings in telegram messages
+- for bullets
+1. for numbered lists
+> for quotes
+[] for to-dos
+*bold text*
+_italic text_
