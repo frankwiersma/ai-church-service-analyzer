@@ -61,7 +61,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Answer the callback query immediately to prevent timeout issues
     await query.answer()
 
-    if query.data.startswith("church_"):
+    # Check if "start" is triggered from the "Analyseer een andere preek" button
+    if query.data == "start":
+        await start(update, context)
+
+    elif query.data.startswith("church_"):
         church = query.data.replace("church_", "")
         await query.edit_message_text(
             f"🔄 Beschikbare preken van {church} worden opgehaald...",
@@ -91,14 +95,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         services = services_by_date.get(date, [])
 
         if services:
-            keyboard = [[InlineKeyboardButton(service["title"], callback_data=f"service_{church}_{service['id']}")]
-                        for service in services]
-            keyboard.append([InlineKeyboardButton("Annuleren", callback_data="cancel")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                f"🕒 Selecteer de specifieke dienst voor {date}:",
-                reply_markup=reply_markup
-            )
+            if len(services) == 1:
+                # Directe selectie als er maar één dienst is
+                service_id = services[0]["id"]
+                cancellation_flags[query.message.chat_id] = False
+                await query.edit_message_text(
+                    f"🔄 Geselecteerde preek van {church} wordt verwerkt...",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+                )
+
+                try:
+                    analysis = await process_selected_service(API_URLS[church], service_id, query)
+                    if cancellation_flags[query.message.chat_id]:
+                        await query.edit_message_text("🚫 Verwerking geannuleerd.")
+                        return
+                    await handle_analysis_response(query, analysis, church, context)
+                except Exception as e:
+                    await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
+            else:
+                # Toon de lijst van diensten als er meerdere zijn
+                keyboard = [[InlineKeyboardButton(service["title"], callback_data=f"service_{church}_{service['id']}")]
+                            for service in services]
+                keyboard.append([InlineKeyboardButton("Annuleren", callback_data="cancel")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    f"🕒 Selecteer de specifieke dienst voor {date}:",
+                    reply_markup=reply_markup
+                )
         else:
             await query.edit_message_text("❌ Geen preken gevonden voor deze datum.")
 
@@ -127,9 +150,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Redirect to the start command to reset the process
         await start(update, context)
-
-
-
 
 async def fetch_church_services(api_url: str, query: Update.callback_query):
     session = requests.Session()
@@ -180,6 +200,7 @@ async def handle_analysis_response(query, analysis, church, context):
                 await query.edit_message_text(f"📊 Analyse voor {church}:\n\n{message}")
             else:
                 await context.bot.send_message(chat_id=query.message.chat_id, text=message)
+        # Add callback data "start" to redirect to the start command
         keyboard = [[InlineKeyboardButton("Analyseer een andere preek", callback_data="start")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(
