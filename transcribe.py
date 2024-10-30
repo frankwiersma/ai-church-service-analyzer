@@ -3,6 +3,7 @@ import os
 import requests
 import json
 from datetime import datetime
+import time
 import google.generativeai as genai
 from moviepy.editor import VideoFileClip
 from dotenv import load_dotenv
@@ -23,9 +24,12 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 authorization_token = os.getenv('AUTHORIZATION_TOKEN')
 
 # List of URLs for different churches
+BASE_URL = "https://api.kerkdienstgemist.nl/api/v2/stations/{}/recordings"
 API_URLS = {
-    "Wijngaarden": "https://api.kerkdienstgemist.nl/api/v2/stations/1306/recordings",
-    "Nieuwe Kerk Utrecht": "https://api.kerkdienstgemist.nl/api/v2/stations/1341/recordings"
+    "Wijngaarden": BASE_URL.format("1306"),
+    "Nieuwe Kerk Utrecht": BASE_URL.format("1341"),
+    "NGK Doorn": BASE_URL.format("2281"),
+    "Elimkerk Hendrik-Ido-Ambacht": BASE_URL.format("876")
 }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,7 +178,6 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     data = api_response.json()
     recording = data.get('data')
 
-    # Process the specific recording (same as in process_church)
     if not recording:
         return "No recording found for the selected service."
 
@@ -191,34 +194,24 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         os.makedirs(recording_folder)
 
     download_url = get_download_url(recording, included_media)
-
     if not download_url:
         return "No download URL found for the recording."
 
-    await query.edit_message_text(f"⬇️ Downloading recording...")
     mp4_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
 
-    if not os.path.exists(mp4_filename):
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            download_file,
-            session,
-            download_url,
-            mp4_filename
-        )
+    # Download with progress
+    await query.edit_message_text(f"⏬ Downloading recording... 0% complete")
+    await download_file_with_progress(session, download_url, mp4_filename, query)
 
-    if not os.path.exists(mp3_filename):
-        await query.edit_message_text("🎵 Converting video to audio...")
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            convert_to_mp3,
-            mp4_filename
-        )
+    # Convert to MP3 with progress
+    await query.edit_message_text("🎵 Converting video to audio... 0% complete")
+    await convert_to_mp3_with_progress(mp4_filename, query)
 
     transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
     extracted_filename = mp3_filename.replace('.mp3', '.txt')
 
+    # Transcription
     if not os.path.exists(transcription_filename):
         await query.edit_message_text("🎙️ Transcribing audio...")
         await asyncio.get_event_loop().run_in_executor(
@@ -229,9 +222,9 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
             extracted_filename
         )
 
+    # Analysis generation
     await query.edit_message_text("🤖 Generating analysis...")
     analysis_filename = os.path.join(recording_folder, 'analysis.txt')
-
     await asyncio.get_event_loop().run_in_executor(
         None,
         generate_analysis,
@@ -262,20 +255,55 @@ def get_download_url(recording, included_media):
             return media_item.get('attributes', {}).get('download_url', '')
     return None
 
-def download_file(session, url, filename):
+last_message_data = {}
+
+async def safe_edit_message_text(query, new_text):
+    """Edit message text only if the content has changed and enough time has passed."""
+    message_id = query.message.message_id
+    chat_id = query.message.chat_id
+    current_time = time.time()
+
+    # Retrieve the last content and timestamp
+    last_text, last_timestamp = last_message_data.get((chat_id, message_id), ("", 0))
+    
+    # Only update if the content is new or enough time (e.g., 1 second) has passed
+    if new_text != last_text and (current_time - last_timestamp > 1):
+        # Update the message
+        await query.edit_message_text(new_text)
+        
+        # Store the new content and timestamp
+        last_message_data[(chat_id, message_id)] = (new_text, current_time)
+
+async def download_file_with_progress(session, url, filename, query):
     with session.get(url, stream=True) as r:
         r.raise_for_status()
+        total_length = int(r.headers.get('content-length', 0))
+        downloaded = 0
+
         with open(filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    progress = int((downloaded / total_length) * 100)
+                    # Alternate text with an ellipsis to force uniqueness
+                    update_text = f"⏬ Downloading recording... {progress}% complete" + ("." if progress % 2 == 0 else "")
+                    await safe_edit_message_text(query, update_text)
 
-def convert_to_mp3(mp4_filename):
+async def convert_to_mp3_with_progress(mp4_filename, query):
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
     video_clip = VideoFileClip(mp4_filename)
     audio_clip = video_clip.audio
-    audio_clip.write_audiofile(mp3_filename)
-    audio_clip.close()
+
+    # Intermediate status update
+    await safe_edit_message_text(query, "🎵 Converting video to audio... 50% complete.")
+    audio_clip.write_audiofile(mp3_filename, verbose=False, logger=None)
+
+    # Final status update
+    await safe_edit_message_text(query, "🎵 Conversion complete! 100%")
+
     video_clip.close()
+    audio_clip.close()
     return mp3_filename
 
 def sanitize_filename(filename):
