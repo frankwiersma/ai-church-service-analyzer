@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  ai-church-service-analyzer:
+    build: .
+    container_name: ai-church-service-analyzer
+    environment:
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AUTHORIZATION_TOKEN=${AUTHORIZATION_TOKEN}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - RECENT_AMOUNT=${RECENT_AMOUNT}
+      - TRANSCRIPTION_SERVICE=${TRANSCRIPTION_SERVICE}
+    volumes:
+      - ./recordings:/app/recordings
+    restart: unless-stopped
