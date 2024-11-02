@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY analyses_prompt.txt .
 COPY transcribe.py .
 COPY readme.md .
+COPY NieuweKerkToevoegen.png .
 
 # Ensure any required environment variables are accessible
 ENV DEEPGRAM_API_KEY=""
