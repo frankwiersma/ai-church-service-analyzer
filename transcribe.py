@@ -206,7 +206,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     if not os.path.exists(transcription_filename):
         await safe_edit_message_text(
             query,
-            "🎙️ Audio wordt getranscribeerd... Dit kan enkele minuten duren.",
+            "🎙️ Audio wordt getranscribeerd...",
             InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
         )
         
@@ -232,7 +232,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
 
     await safe_edit_message_text(
         query,
-        "🤖 Analyse wordt gegenereerd... Dit kan enkele minuten duren.",
+        "🤖 Analyse wordt gegenereerd...",
         InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
     )
 
@@ -248,26 +248,70 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
 
     return analysis_text
 
+def escape_markdown_v2_text(text: str) -> str:
+    """
+    Properly escape MarkdownV2 characters while preserving intended formatting.
+    First replace style markers with temporary placeholders, then escape special chars,
+    then restore style markers with proper MarkdownV2 syntax.
+    """
+    # Step 1: Replace style markers with unique placeholders
+    formatted_text = text
+    formatted_text = formatted_text.replace('**', '§BOLD§')  # Replace double asterisks with placeholder
+    formatted_text = formatted_text.replace('_', '§ITALIC§')  # Replace underscores with placeholder
+
+    # Step 2: Escape special characters
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        formatted_text = formatted_text.replace(char, f'\\{char}')
+
+    # Step 3: Restore style markers with proper MarkdownV2 syntax
+    formatted_text = formatted_text.replace('§BOLD§', '*')      # Replace bold placeholder with single asterisk
+    formatted_text = formatted_text.replace('§ITALIC§', '_')    # Restore italic placeholder
+
+    return formatted_text
+
 async def handle_analysis_response(query, analysis, church, context):
     if analysis:
         max_length = 4096
         if isinstance(analysis, bytes):
             analysis = analysis.decode('utf-8')
         
-        messages = [analysis[i:i+max_length] for i in range(0, len(analysis), max_length)]
-        for i, message in enumerate(messages):
-            if i == 0:
-                await query.edit_message_text(f"📊 Analyse voor {church}:\n\n{message}")
-            else:
-                await context.bot.send_message(chat_id=query.message.chat_id, text=message)
-        
-        keyboard = [[InlineKeyboardButton("Analyseer een andere preek", callback_data="start")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="Wil je een andere preek analyseren?",
-            reply_markup=reply_markup
-        )
+        try:
+            # Format the church name
+            escaped_church = escape_markdown_v2_text(church)
+            
+            # Split and format messages
+            messages = [analysis[i:i+max_length] for i in range(0, len(analysis), max_length)]
+            for i, message in enumerate(messages):
+                escaped_message = escape_markdown_v2_text(message)
+                if i == 0:
+                    await query.edit_message_text(
+                        text=f"📊 Analyse voor {escaped_church}:\n\n{escaped_message}",
+                        parse_mode='MarkdownV2'
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=escaped_message,
+                        parse_mode='MarkdownV2'
+                    )
+            
+            keyboard = [[InlineKeyboardButton("Analyseer een andere preek", callback_data="start")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="Wil je een andere preek analyseren?",
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            print(f"Formatting error: {str(e)}")
+            # Log the problematic text for debugging
+            print(f"Problematic text sample: {analysis[:200]}")
+            # Fallback to unformatted
+            await query.edit_message_text(
+                text=f"📊 Analyse voor {church}:\n\n{analysis}",
+                parse_mode=None
+            )
     else:
         await query.edit_message_text("❌ Genereren van analyse is mislukt. Probeer het opnieuw.")
 
@@ -279,8 +323,24 @@ async def safe_edit_message_text(query, new_text, reply_markup=None):
     last_text, last_timestamp = last_message_data.get((chat_id, message_id), ("", 0))
     
     if new_text != last_text and (current_time - last_timestamp > 1):
-        await query.edit_message_text(new_text, reply_markup=reply_markup)
-        last_message_data[(chat_id, message_id)] = (new_text, current_time)
+        try:
+            escaped_text = escape_markdown_v2_text(new_text)
+            await query.edit_message_text(
+                text=escaped_text,
+                reply_markup=reply_markup,
+                parse_mode='MarkdownV2'
+            )
+            last_message_data[(chat_id, message_id)] = (new_text, current_time)
+        except Exception as e:
+            print(f"Formatting error in safe_edit: {str(e)}")
+            # Log the problematic text for debugging
+            print(f"Problematic text sample: {new_text[:200]}")
+            # Fallback to unformatted
+            await query.edit_message_text(
+                text=new_text,
+                reply_markup=reply_markup,
+                parse_mode=None
+            )
 
 async def download_file_with_progress(session, url, filename, query):
     """

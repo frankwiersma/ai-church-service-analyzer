@@ -1,4 +1,4 @@
-Analyseer de opname van deze kerkdienst en gebruik Telegram-stijl opmaak:
+Analyseer de opname van deze kerkdienst in het volgende format:
 
 📋 **Dienst Overzicht**
 
