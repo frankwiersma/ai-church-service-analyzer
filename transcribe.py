@@ -12,6 +12,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from deepgram import DeepgramClient, PrerecordedOptions
 import sys
 import locale
+from telegram import InputFile
 
 # Set up UTF-8 encoding for the entire script
 sys.stdout.reconfigure(encoding='utf-8')
@@ -93,12 +94,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_add_church(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('adding_church'):
-        # Start the process
+        # Start the process of adding a new church
         context.user_data['adding_church'] = True
-        await update.callback_query.edit_message_text(
-            "🔢 Voer het Kerkdienstgemist kerk ID in:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
-        )
+        
+        # Post the image to show users where to get the ID
+        with open('NieuweKerkToevoegen.png', 'rb') as image_file:
+            await update.callback_query.message.reply_photo(
+                photo=InputFile(image_file),
+                caption="🔢 Voer het Kerkdienstgemist kerk ID in. Zie de afbeelding hierboven voor hulp bij het vinden van de ID.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+            )
     return
 
 async def handle_church_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
