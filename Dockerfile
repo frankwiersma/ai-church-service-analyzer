@@ -1,15 +1,17 @@
-# Use a Python 3.10 or later image to support match-case statements
+# Dockerfile
 FROM python:3.10-slim
 
 # Set the working directory
 WORKDIR /app
 
-# Copy the requirements file and install dependencies
+# Copy only the necessary files (excluding recordings folder)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app files
-COPY . .
+# Copy application files (explicitly exclude recordings)
+COPY analyses_prompt.txt .
+COPY transcribe.py .
+COPY readme.md .
 
 # Ensure any required environment variables are accessible
 ENV DEEPGRAM_API_KEY=""
@@ -21,6 +23,9 @@ ENV TRANSCRIPTION_SERVICE="deepgram"
 
 # Expose port if necessary (e.g., for the bot server)
 EXPOSE 5000
+
+# Create directory for mounting
+RUN mkdir -p /app/recordings
 
 # Run the main script when the container starts
 CMD ["python", "transcribe.py"]

@@ -12,5 +12,7 @@ services:
       - RECENT_AMOUNT=${RECENT_AMOUNT}
       - TRANSCRIPTION_SERVICE=${TRANSCRIPTION_SERVICE}
     volumes:
-      - ./recordings:/app/recordings
+      - type: bind
+        source: /home/pentest/experimental/ai-church-service-analyzer/recordings
+        target: /app/recordings
     restart: unless-stopped
