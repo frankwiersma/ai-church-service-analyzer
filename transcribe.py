@@ -309,11 +309,14 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
     )
 
+    # Generate the analysis with the church name and date in the prompt
     await asyncio.get_event_loop().run_in_executor(
         None,
         generate_analysis,
         extracted_filename,
-        analysis_filename
+        analysis_filename,
+        church_name,  # Include the church name
+        date_str      # Include the date of the recording
     )
 
     with open(analysis_filename, 'r', encoding='utf-8') as f:
@@ -569,7 +572,7 @@ def transcribe_with_deepgram(mp3_filename, transcription_filename, extracted_fil
     except Exception as e:
         print(f"❌ Operatie mislukt: {e}")
 
-def generate_analysis(extracted_filename, analysis_filename):
+def generate_analysis(extracted_filename, analysis_filename, church_name, date):
     try:
         with open(extracted_filename, 'r', encoding='utf-8') as f:
             transcript = f.read()
@@ -579,7 +582,9 @@ def generate_analysis(extracted_filename, analysis_filename):
             print("❌ Analyseprompt niet geladen. Analyse wordt overgeslagen.")
             return
         
-        prompt = f"{prompt_template}\n\nTranscript:\n{transcript}"
+        # Create the dynamic prompt with the church name and date
+        prompt = f"Church: {church_name}\nDate: {date}\n\n{prompt_template}\n\nTranscript:\n{transcript}"
+        
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash-8b')
         result = model.generate_content(prompt)
@@ -592,6 +597,7 @@ def generate_analysis(extracted_filename, analysis_filename):
             print("❌ Genereren van analyse mislukt.")
     except Exception as e:
         print(f"❌ Genereren van analyse mislukt: {e}")
+
 
 def load_analysis_prompt():
     prompt_file = os.path.join(os.path.dirname(__file__), 'analyses_prompt.txt')
