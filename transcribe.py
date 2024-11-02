@@ -645,10 +645,31 @@ def get_download_url(recording, included_media):
     return None, None
 
 def sanitize_filename(filename):
-    invalid_chars = r'<>:"/\|?*'
+    """
+    Sanitize filename by:
+    1. Replacing biblical reference characters (: and /) with proper alternatives
+    2. Removing other invalid filename characters
+    3. Replacing spaces with underscores
+    """
+    # First handle biblical references specifically
+    filename = filename.replace(':', '_').replace('/', '_')
+    
+    # Then handle all other invalid characters
+    invalid_chars = r'<>"\|?*'
     for char in invalid_chars:
         filename = filename.replace(char, '')
-    return filename.replace(' ', '_')
+        
+    # Replace spaces with underscores
+    filename = filename.replace(' ', '_')
+    
+    # Remove multiple consecutive underscores
+    while '__' in filename:
+        filename = filename.replace('__', '_')
+        
+    # Remove any leading/trailing underscores
+    filename = filename.strip('_')
+    
+    return filename
 
 async def get_paginated_keyboard(churches: dict, page: int = 1, churches_per_page: int = 5) -> InlineKeyboardMarkup:
     """
