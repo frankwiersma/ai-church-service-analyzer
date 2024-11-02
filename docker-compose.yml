@@ -13,6 +13,6 @@ services:
       - TRANSCRIPTION_SERVICE=${TRANSCRIPTION_SERVICE}
     volumes:
       - type: bind
-        source: /home/pentest/experimental/ai-church-service-analyzer/recordings
+        source: ./recordings
         target: /app/recordings
     restart: unless-stopped
