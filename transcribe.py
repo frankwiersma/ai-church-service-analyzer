@@ -107,7 +107,11 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         'Authorization': f'Bearer {authorization_token}',
     }
 
-    await query.edit_message_text("🔍 Geselecteerde opname wordt opgehaald...")
+    await query.edit_message_text(
+        "🔍 Geselecteerde opname wordt opgehaald...",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
+    
     api_response = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: session.get(f"{api_url}/{service_id}", headers=headers)
@@ -161,22 +165,51 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
 
     if not os.path.exists(mp3_filename):
+        # Download phase
         await download_file_with_progress(session, download_url, mp4_filename, query)
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
 
+        await asyncio.sleep(1)  # Small delay to ensure message visibility
+        
+        # Start conversion phase with explicit message
+        await safe_edit_message_text(
+            query,
+            "🎥 Videoverwerking wordt gestart...",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        
+        await asyncio.sleep(1)  # Small delay to ensure message visibility
+        
+        # Conversion phase
         await convert_to_mp3_with_progress(mp4_filename, query)
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
             
+        await asyncio.sleep(1)  # Small delay to ensure message visibility
+
         if os.path.exists(mp4_filename):
             os.remove(mp4_filename)
 
     transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
     extracted_filename = mp3_filename.replace('.mp3', '.txt')
 
+    # Clear transition to transcription phase
+    await safe_edit_message_text(
+        query,
+        "🎙️ Voorbereiding transcriptie...",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
+    
+    await asyncio.sleep(1)  # Small delay to ensure message visibility
+
     if not os.path.exists(transcription_filename):
-        await query.edit_message_text("🎙️ Audio wordt getranscribeerd...")
+        await safe_edit_message_text(
+            query,
+            "🎙️ Audio wordt getranscribeerd... Dit kan enkele minuten duren.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        
         await asyncio.get_event_loop().run_in_executor(
             None,
             transcribe_audio,
@@ -184,10 +217,25 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
             transcription_filename,
             extracted_filename
         )
+        
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
 
-    await query.edit_message_text("🤖 Analyse wordt gegenereerd...")
+    # Clear transition to analysis phase
+    await safe_edit_message_text(
+        query,
+        "🤖 Voorbereiding analyse...",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
+    
+    await asyncio.sleep(1)  # Small delay to ensure message visibility
+
+    await safe_edit_message_text(
+        query,
+        "🤖 Analyse wordt gegenereerd... Dit kan enkele minuten duren.",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
+
     await asyncio.get_event_loop().run_in_executor(
         None,
         generate_analysis,
