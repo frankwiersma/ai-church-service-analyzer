@@ -237,42 +237,48 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     if not os.path.exists(recording_folder):
         os.makedirs(recording_folder)
 
-    download_url = get_download_url(recording, included_media)
+    download_url, file_type = get_download_url(recording, included_media)
     if not download_url:
         return "Geen download URL gevonden voor de opname."
 
-    mp4_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
-    mp3_filename = mp4_filename.replace('.mp4', '.mp3')
+    # Define filenames based on the file type
+    if file_type == 'mp4':
+        downloaded_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
+        final_mp3_filename = downloaded_filename.replace('.mp4', '.mp3')
+    else:  # mp3
+        downloaded_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp3")
+        final_mp3_filename = downloaded_filename  # For MP3, they're the same
 
-    if not os.path.exists(mp3_filename):
+    if not os.path.exists(final_mp3_filename):
         # Download phase
-        await download_file_with_progress(session, download_url, mp4_filename, query)
+        await download_file_with_progress(session, download_url, downloaded_filename, query)
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
 
         await asyncio.sleep(1)  # Small delay to ensure message visibility
         
-        # Start conversion phase with explicit message
-        await safe_edit_message_text(
-            query,
-            "🎥 Videoverwerking wordt gestart...",
-            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
-        )
-        
-        await asyncio.sleep(1)  # Small delay to ensure message visibility
-        
-        # Conversion phase
-        await convert_to_mp3_with_progress(mp4_filename, query)
-        if cancellation_flags[query.message.chat_id]:
-            return "Bewerking geannuleerd."
+        # Convert only if it's an MP4 file
+        if file_type == 'mp4':
+            await safe_edit_message_text(
+                query,
+                "🎥 Videoverwerking wordt gestart...",
+                InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+            )
             
-        await asyncio.sleep(1)  # Small delay to ensure message visibility
+            await asyncio.sleep(1)
+            
+            await convert_to_mp3_with_progress(downloaded_filename, query)
+            if cancellation_flags[query.message.chat_id]:
+                return "Bewerking geannuleerd."
+                
+            await asyncio.sleep(1)
 
-        if os.path.exists(mp4_filename):
-            os.remove(mp4_filename)
+            # Clean up MP4 file after conversion
+            if os.path.exists(downloaded_filename):
+                os.remove(downloaded_filename)
 
-    transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
-    extracted_filename = mp3_filename.replace('.mp3', '.txt')
+    transcription_filename = final_mp3_filename.replace('.mp3', '_full.txt')
+    extracted_filename = final_mp3_filename.replace('.mp3', '.txt')
 
     await safe_edit_message_text(
         query,
@@ -292,7 +298,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         await asyncio.get_event_loop().run_in_executor(
             None,
             transcribe_audio,
-            mp3_filename,
+            final_mp3_filename,
             transcription_filename,
             extracted_filename
         )
@@ -314,14 +320,13 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
     )
 
-    # Generate the analysis with the church name and date in the prompt
     await asyncio.get_event_loop().run_in_executor(
         None,
         generate_analysis,
         extracted_filename,
         analysis_filename,
-        church_name,  # Include the church name
-        date_str      # Include the date of the recording
+        church_name,
+        date_str
     )
 
     with open(analysis_filename, 'r', encoding='utf-8') as f:
@@ -622,14 +627,22 @@ def parse_date(start_time):
         return start_time[:10]
 
 def get_download_url(recording, included_media):
+    """
+    Get download URL and file type from the recording data.
+    Returns tuple of (url, file_type) where file_type is either 'mp3' or 'mp4'
+    """
     relationships = recording.get('relationships', {})
     media_data = relationships.get('media', {}).get('data', [])
     media_ids = {m['id'] for m in media_data}
 
     for media_item in included_media:
-        if media_item['id'] in media_ids and media_item['type'] == 'video_files':
-            return media_item.get('attributes', {}).get('download_url', '')
-    return None
+        if media_item['id'] in media_ids:
+            attributes = media_item.get('attributes', {})
+            if media_item['type'] == 'audio_files':
+                return attributes.get('download_url', ''), 'mp3'
+            elif media_item['type'] == 'video_files':
+                return attributes.get('download_url', ''), 'mp4'
+    return None, None
 
 def sanitize_filename(filename):
     invalid_chars = r'<>:"/\|?*'
