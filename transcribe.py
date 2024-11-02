@@ -224,7 +224,8 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         os.makedirs(church_folder)
 
     date_str = parse_date(start_time)
-    folder_name = sanitize_filename(f"{date_str}_{title}")
+    sanitized_title = sanitize_filename(title)  # Sanitize the title consistently
+    folder_name = f"{date_str}_{sanitized_title}"
     recording_folder = os.path.join(church_folder, folder_name)
 
     # Check if analysis.txt already exists
@@ -241,13 +242,14 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     if not download_url:
         return "Geen download URL gevonden voor de opname."
 
-    # Define filenames based on the file type
+    # Define filenames based on the file type, using sanitized title
+    base_filename = f"{date_str}_{sanitized_title}"  # Use the same sanitized title as folder
     if file_type == 'mp4':
-        downloaded_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp4")
-        final_mp3_filename = downloaded_filename.replace('.mp4', '.mp3')
+        downloaded_filename = os.path.join(recording_folder, f"{base_filename}.mp4")
+        final_mp3_filename = os.path.join(recording_folder, f"{base_filename}.mp3")
     else:  # mp3
-        downloaded_filename = os.path.join(recording_folder, f"{date_str}_{title.replace(' ', '_')}.mp3")
-        final_mp3_filename = downloaded_filename  # For MP3, they're the same
+        downloaded_filename = os.path.join(recording_folder, f"{base_filename}.mp3")
+        final_mp3_filename = downloaded_filename
 
     if not os.path.exists(final_mp3_filename):
         # Download phase
@@ -255,7 +257,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
 
-        await asyncio.sleep(1)  # Small delay to ensure message visibility
+        await asyncio.sleep(1)
         
         # Convert only if it's an MP4 file
         if file_type == 'mp4':
@@ -277,8 +279,8 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
             if os.path.exists(downloaded_filename):
                 os.remove(downloaded_filename)
 
-    transcription_filename = final_mp3_filename.replace('.mp3', '_full.txt')
-    extracted_filename = final_mp3_filename.replace('.mp3', '.txt')
+    transcription_filename = os.path.join(recording_folder, f"{base_filename}_full.txt")
+    extracted_filename = os.path.join(recording_folder, f"{base_filename}.txt")
 
     await safe_edit_message_text(
         query,
