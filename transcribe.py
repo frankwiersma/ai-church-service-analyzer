@@ -289,7 +289,7 @@ async def download_file_with_progress(session, url, filename, query):
     """
     await safe_edit_message_text(
         query,
-        "⏬ Download wordt gestart met annuleeroptie...",
+        "⏬ Download wordt gestart...",
         InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
     )
     
