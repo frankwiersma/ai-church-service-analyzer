@@ -235,13 +235,21 @@ async def safe_edit_message_text(query, new_text, reply_markup=None):
         last_message_data[(chat_id, message_id)] = (new_text, current_time)
 
 async def download_file_with_progress(session, url, filename, query):
-    await safe_edit_message_text(query, "⏬ Download wordt gestart met annuleeroptie...", 
-                                 InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]]))
+    """
+    Downloads a file with progress updates and cancellation option.
+    Shows progress every 5% during download.
+    """
+    await safe_edit_message_text(
+        query,
+        "⏬ Download wordt gestart met annuleeroptie...",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
     
     with session.get(url, stream=True) as r:
         r.raise_for_status()
         total_length = int(r.headers.get('content-length', 0))
         downloaded = 0
+        last_percentage = -1  # Track last shown percentage
 
         with open(filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
@@ -250,10 +258,15 @@ async def download_file_with_progress(session, url, filename, query):
                     downloaded += len(chunk)
                     progress = int((downloaded / total_length) * 100)
                     
-                    if progress % 5 == 0:
+                    # Update message every 5% progress
+                    if progress % 5 == 0 and progress != last_percentage:
+                        last_percentage = progress
                         update_text = f"⏬ Opname wordt gedownload... {progress}% voltooid"
-                        await safe_edit_message_text(query, update_text, 
-                                                     InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]]))
+                        await safe_edit_message_text(
+                            query,
+                            update_text,
+                            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+                        )
                 
                 if cancellation_flags.get(query.message.chat_id):
                     await query.edit_message_text("🚫 Download geannuleerd. Terug naar kerklijst.")
@@ -261,26 +274,83 @@ async def download_file_with_progress(session, url, filename, query):
                     await start(query, None)
                     return
 
-    await safe_edit_message_text(query, "✅ Download voltooid!", InlineKeyboardMarkup([]))
+    # Show final completion message
+    await safe_edit_message_text(
+        query,
+        "✅ Download voltooid! Conversie wordt gestart...",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
 
 async def convert_to_mp3_with_progress(mp4_filename, query):
+    """
+    Converts MP4 to MP3 with progress updates and cancellation option.
+    Shows multiple stages of conversion process.
+    """
     mp3_filename = mp4_filename.replace('.mp4', '.mp3')
-    video_clip = VideoFileClip(mp4_filename)
-    audio_clip = video_clip.audio
+    
+    try:
+        # Load video file
+        await safe_edit_message_text(
+            query,
+            "🎥 Video wordt geladen... (25% voltooid)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        video_clip = VideoFileClip(mp4_filename)
+        
+        if cancellation_flags.get(query.message.chat_id):
+            video_clip.close()
+            return None
 
-    await safe_edit_message_text(query, "🎵 Video wordt omgezet naar audio... 50% voltooid")
-    audio_clip.write_audiofile(mp3_filename, verbose=False, logger=None)
+        # Extract audio
+        await safe_edit_message_text(
+            query,
+            "🎵 Audio wordt geëxtraheerd... (50% voltooid)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        audio_clip = video_clip.audio
+        
+        if cancellation_flags.get(query.message.chat_id):
+            video_clip.close()
+            audio_clip.close()
+            return None
 
-    if cancellation_flags[query.message.chat_id]:
-        await query.edit_message_text("🚫 Conversie geannuleerd.")
+        # Write audio file
+        await safe_edit_message_text(
+            query,
+            "💾 Audio wordt opgeslagen... (75% voltooid)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        audio_clip.write_audiofile(mp3_filename, verbose=False, logger=None)
+
+        if cancellation_flags.get(query.message.chat_id):
+            video_clip.close()
+            audio_clip.close()
+            if os.path.exists(mp3_filename):
+                os.remove(mp3_filename)
+            return None
+
+        # Cleanup and completion
+        await safe_edit_message_text(
+            query,
+            "🎵 Conversie voltooid! (100% voltooid)",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        
         video_clip.close()
         audio_clip.close()
-        return None
+        return mp3_filename
 
-    await safe_edit_message_text(query, "🎵 Conversie voltooid! 100%")
-    video_clip.close()
-    audio_clip.close()
-    return mp3_filename
+    except Exception as e:
+        await safe_edit_message_text(
+            query,
+            f"❌ Fout tijdens conversie: {str(e)}",
+            InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+        if 'video_clip' in locals():
+            video_clip.close()
+        if 'audio_clip' in locals():
+            audio_clip.close()
+        return None
 
 def transcribe_audio(mp3_filename, transcription_filename, extracted_filename):
     if transcription_service == 'gemini':
