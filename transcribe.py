@@ -8,7 +8,7 @@ import google.generativeai as genai
 from moviepy.editor import VideoFileClip
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ApplicationBuilder
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ApplicationBuilder, MessageHandler, filters
 from deepgram import DeepgramClient, PrerecordedOptions
 import sys
 import locale
@@ -29,37 +29,110 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 authorization_token = os.getenv('AUTHORIZATION_TOKEN')
 
-# List of URLs for different churches
-BASE_URL = "https://api.kerkdienstgemist.nl/api/v2/stations/{}/recordings"
-API_URLS = {
-    "Wijngaarden": BASE_URL.format("1306"),
-    "Nieuwe Kerk Utrecht": BASE_URL.format("1341"),
-    "NGK Doorn": BASE_URL.format("2281"),
-    "Elimkerk Hendrik-Ido-Ambacht": BASE_URL.format("876")
-}
+class ChurchManager:
+    def __init__(self):
+        self.churches_file = 'churches.json'
+        self.base_url = "https://api.kerkdienstgemist.nl/api/v2/stations/{}/recordings"
+        self.load_churches()
 
-# Define a global dictionary to store cancellation requests for each chat
+    def load_churches(self):
+        if os.path.exists(self.churches_file):
+            with open(self.churches_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.churches = data.get('churches', {})
+        else:
+            # Default churches if file doesn't exist
+            self.churches = {
+                "Wijngaarden": "1306",
+                "Nieuwe Kerk Utrecht": "1341",
+                "NGK Doorn": "2281",
+                "Elimkerk Hendrik-Ido-Ambacht": "876"
+            }
+            self.save_churches()
+
+    def save_churches(self):
+        with open(self.churches_file, 'w', encoding='utf-8') as f:
+            json.dump({'churches': self.churches}, f, indent=4, ensure_ascii=False)
+
+    def add_church(self, name: str, church_id: str) -> bool:
+        if name in self.churches:
+            return False
+        self.churches[name] = church_id
+        self.save_churches()
+        return True
+
+    def get_api_urls(self):
+        return {name: self.base_url.format(church_id) 
+                for name, church_id in self.churches.items()}
+
+# Dictionary to store cancellation flags for each chat
 cancellation_flags = {}
 last_message_data = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Reset cancellation flag for the new session
     chat_id = update.message.chat_id if update.message else update.callback_query.message.chat_id
     cancellation_flags[chat_id] = False
-    keyboard = []
-    for church in API_URLS.keys():
-        keyboard.append([InlineKeyboardButton(church, callback_data=f"church_{church}")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Initialize page number if not set
+    if not context.user_data.get('page'):
+        context.user_data['page'] = 1
+    
+    church_manager = ChurchManager()
+    reply_markup = await get_paginated_keyboard(church_manager.churches, context.user_data['page'])
+    
     if update.message:
         await update.message.reply_text(
-            "⛪ Welkom! Selecteer een kerk:",
+            "⛪ Welkom! Selecteer een kerk of voeg een nieuwe toe:",
             reply_markup=reply_markup
         )
     else:
         await update.callback_query.message.reply_text(
-            "⛪ Welkom! Selecteer een kerk:",
+            "⛪ Welkom! Selecteer een kerk of voeg een nieuwe toe:",
             reply_markup=reply_markup
         )
+
+async def handle_add_church(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('adding_church'):
+        # Start the process
+        context.user_data['adding_church'] = True
+        await update.callback_query.edit_message_text(
+            "🔢 Voer het Kerkdienstgemist kerk ID in:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+        )
+    return
+
+async def handle_church_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('adding_church'):
+        return
+    
+    message_text = update.message.text
+    
+    if not context.user_data.get('church_id'):
+        # Process church ID
+        if message_text.isdigit():
+            context.user_data['church_id'] = message_text
+            await update.message.reply_text(
+                "✍️ Geef deze kerk een naam:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Voer een geldig nummer in als kerk ID.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+            )
+    else:
+        # Process church name
+        church_manager = ChurchManager()
+        success = church_manager.add_church(message_text, context.user_data['church_id'])
+        
+        if success:
+            await update.message.reply_text(f"✅ Kerk '{message_text}' is succesvol toegevoegd!")
+        else:
+            await update.message.reply_text("❌ Deze kerknaam bestaat al. Kies een andere naam.")
+        
+        # Reset status and return to main menu
+        context.user_data.clear()
+        await start(update, context)
 
 async def fetch_church_services(api_url: str, query: Update.callback_query):
     session = requests.Session()
@@ -130,7 +203,9 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
 
     # Extract church name from API_URLS by matching the api_url
     church_name = None
-    for name, url in API_URLS.items():
+    church_manager = ChurchManager()
+    api_urls = church_manager.get_api_urls()
+    for name, url in api_urls.items():
         if url == api_url:
             church_name = name
             break
@@ -194,14 +269,13 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     transcription_filename = mp3_filename.replace('.mp3', '_full.txt')
     extracted_filename = mp3_filename.replace('.mp3', '.txt')
 
-    # Clear transition to transcription phase
     await safe_edit_message_text(
         query,
         "🎙️ Voorbereiding transcriptie...",
         InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
     )
     
-    await asyncio.sleep(1)  # Small delay to ensure message visibility
+    await asyncio.sleep(1)
 
     if not os.path.exists(transcription_filename):
         await safe_edit_message_text(
@@ -221,14 +295,13 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
 
-    # Clear transition to analysis phase
     await safe_edit_message_text(
         query,
         "🤖 Voorbereiding analyse...",
         InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
     )
     
-    await asyncio.sleep(1)  # Small delay to ensure message visibility
+    await asyncio.sleep(1)
 
     await safe_edit_message_text(
         query,
@@ -553,16 +626,70 @@ def sanitize_filename(filename):
         filename = filename.replace(char, '')
     return filename.replace(' ', '_')
 
+async def get_paginated_keyboard(churches: dict, page: int = 1, churches_per_page: int = 5) -> InlineKeyboardMarkup:
+    """
+    Create a paginated keyboard for church selection.
+    
+    Args:
+        churches (dict): Dictionary of churches
+        page (int): Current page number (1-based)
+        churches_per_page (int): Number of churches to show per page
+    
+    Returns:
+        InlineKeyboardMarkup: Keyboard markup with pagination
+    """
+    church_items = list(churches.items())
+    total_pages = (len(church_items) + churches_per_page - 1) // churches_per_page
+    start_idx = (page - 1) * churches_per_page
+    end_idx = start_idx + churches_per_page
+    
+    # Create church buttons for current page
+    keyboard = []
+    for name, church_id in church_items[start_idx:end_idx]:
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"church_{name}")])
+    
+    # Add navigation buttons if needed
+    nav_buttons = []
+    if total_pages > 1:
+        if page > 1:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Vorige", callback_data=f"page_{page-1}"))
+        if page < total_pages:
+            nav_buttons.append(InlineKeyboardButton("Volgende ➡️", callback_data=f"page_{page+1}"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    # Add the "Add new church" button at the bottom
+    keyboard.append([InlineKeyboardButton("➕ Nieuwe kerk toevoegen", callback_data="add_church")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    
-    # Answer the callback query immediately to prevent timeout issues
     await query.answer()
 
-    # Check if "start" is triggered from the "Analyseer een andere preek" button
-    if query.data == "start":
-        await start(update, context)
+    # Handle pagination
+    if query.data.startswith("page_"):
+        page = int(query.data.split("_")[1])
+        context.user_data['page'] = page
+        church_manager = ChurchManager()
+        reply_markup = await get_paginated_keyboard(church_manager.churches, page)
+        await query.edit_message_text(
+            "⛪ Welkom! Selecteer een kerk of voeg een nieuwe toe:",
+            reply_markup=reply_markup
+        )
+        return
 
+    if query.data == "add_church":
+        await handle_add_church(update, context)
+    elif query.data == "start":
+        context.user_data['page'] = 1  # Reset page when starting over
+        await start(update, context)
+    elif query.data == "cancel":
+        context.user_data.clear()
+        cancellation_flags[query.message.chat_id] = True
+        await query.edit_message_text("🔙 Bewerking wordt geannuleerd... Terug naar start.")
+        await start(update, context)
     elif query.data.startswith("church_"):
         church = query.data.replace("church_", "")
         await query.edit_message_text(
@@ -571,7 +698,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         try:
-            services_by_date = await fetch_church_services(API_URLS[church], query)
+            church_manager = ChurchManager()
+            api_urls = church_manager.get_api_urls()
+            services_by_date = await fetch_church_services(api_urls[church], query)
             if services_by_date:
                 keyboard = [[InlineKeyboardButton(date, callback_data=f"date_{church}_{date}")]
                             for date in services_by_date.keys()]
@@ -583,12 +712,26 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 await query.edit_message_text("❌ Geen preken gevonden voor deze kerk.")
+                keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text(
+                    "Klik hier om terug te gaan:",
+                    reply_markup=reply_markup
+                )
         except Exception as e:
             await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
+            keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text(
+                "Klik hier om terug te gaan:",
+                reply_markup=reply_markup
+            )
 
     elif query.data.startswith("date_"):
         _, church, date = query.data.split("_", 2)
-        services_by_date = await fetch_church_services(API_URLS[church], query)
+        church_manager = ChurchManager()
+        api_urls = church_manager.get_api_urls()
+        services_by_date = await fetch_church_services(api_urls[church], query)
         services = services_by_date.get(date, [])
 
         if services:
@@ -601,13 +744,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 try:
-                    analysis = await process_selected_service(API_URLS[church], service_id, query)
+                    analysis = await process_selected_service(api_urls[church], service_id, query)
                     if cancellation_flags[query.message.chat_id]:
                         await query.edit_message_text("🚫 Verwerking geannuleerd.")
+                        keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        await query.message.reply_text(
+                            "Klik hier om terug te gaan:",
+                            reply_markup=reply_markup
+                        )
                         return
                     await handle_analysis_response(query, analysis, church, context)
                 except Exception as e:
                     await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
+                    keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await query.message.reply_text(
+                        "Klik hier om terug te gaan:",
+                        reply_markup=reply_markup
+                    )
             else:
                 keyboard = [[InlineKeyboardButton(service["title"], callback_data=f"service_{church}_{service['id']}")]
                             for service in services]
@@ -619,6 +774,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         else:
             await query.edit_message_text("❌ Geen preken gevonden voor deze datum.")
+            keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text(
+                "Klik hier om terug te gaan:",
+                reply_markup=reply_markup
+            )
 
     elif query.data.startswith("service_"):
         _, church, service_id = query.data.split("_", 2)
@@ -629,18 +790,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            analysis = await process_selected_service(API_URLS[church], service_id, query)
+            church_manager = ChurchManager()
+            api_urls = church_manager.get_api_urls()
+            analysis = await process_selected_service(api_urls[church], service_id, query)
             if cancellation_flags[query.message.chat_id]:
                 await query.edit_message_text("🚫 Verwerking geannuleerd.")
+                keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.message.reply_text(
+                    "Klik hier om terug te gaan:",
+                    reply_markup=reply_markup
+                )
                 return
             await handle_analysis_response(query, analysis, church, context)
         except Exception as e:
             await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
-
-    elif query.data == "cancel":
-        cancellation_flags[query.message.chat_id] = True
-        await query.edit_message_text("🔙 Bewerking wordt geannuleerd... Terug naar start.")
-        await start(update, context)
+            keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text(
+                "Klik hier om terug te gaan:",
+                reply_markup=reply_markup
+            )
 
 async def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -657,12 +827,17 @@ def run_application():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_church_input))
     
     print("Bot wordt gestart...")
     application.run_polling(poll_interval=1.0, timeout=20)
 
 if __name__ == '__main__':
     try:
+        # Ensure the recordings directory exists
+        if not os.path.exists(ROOT_FOLDER):
+            os.makedirs(ROOT_FOLDER)
+            
         run_application()
     except KeyboardInterrupt:
         print("Bot gestopt door gebruiker")
