@@ -19,7 +19,7 @@ _[Hoofdthema]_
 • **Zegen:** _[beschrijving]_
 
 📢 **Preek Samenvatting**
-[5 zinnen samenvatting, begin met "In deze dienst"]
+[20 zinnen samenvatting, begin met "In deze dienst"]
 
 💡 **Kernboodschap**
 [2-3 zinnen die de hoofdboodschap samenvatten]
