@@ -4,3 +4,4 @@ moviepy
 python-dotenv
 python-telegram-bot
 deepgram-sdk
+sendgrid
