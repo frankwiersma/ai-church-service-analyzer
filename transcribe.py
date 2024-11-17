@@ -592,51 +592,134 @@ class ReportManager:
         return name.strip('_')
 
 # Update the send_html_report function to use the new EmailService
-async def send_html_report(
-    html_report_filename: str,
-    church_name: str,
-    date: str,
-    recipient_email: str,
-    domain: str
-) -> Tuple[bool, str]:
+async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Send HTML report via email using the EmailService.
+    Request email address from user.
     
     Args:
-        html_report_filename: Path to the HTML report file
-        church_name: Name of the church
-        date: Date of the service
-        recipient_email: Recipient's email address
-        domain: Domain for the from address
-        
-    Returns:
-        Tuple of (success: bool, message: str)
+        update (Update): The update object
+        context (ContextTypes.DEFAULT_TYPE): The context object
     """
-    try:
-        # Read the HTML report
-        with open(html_report_filename, 'r', encoding='utf-8') as f:
-            html_content = f.read()
-        
-        # Initialize email service
-        email_service = EmailService(
-            api_key=os.getenv('SENDGRID_API_KEY'),
-            default_from_domain=domain
+    # Store the report details in context for later use
+    parts = update.callback_query.data.split('_')
+    context.user_data['pending_report'] = {
+        'church_name': '_'.join(parts[2:-1]),
+        'date': parts[-1]
+    }
+    
+    keyboard = [
+        [InlineKeyboardButton("❌ Annuleren", callback_data="cancel_email")],
+        [InlineKeyboardButton("📧 Gebruik standaard email", callback_data="use_default_email")]
+    ]
+    
+    await update.callback_query.edit_message_text(
+        "📧 Voer het email adres in waar het rapport naartoe gestuurd moet worden:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    # Set state to wait for email input
+    context.user_data['awaiting_email'] = True
+
+async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle email input from user.
+    
+    Args:
+        update (Update): The update object
+        context (ContextTypes.DEFAULT_TYPE): The context object
+    """
+    if not context.user_data.get('awaiting_email'):
+        return
+    
+    email = update.message.text.strip()
+    # Basic email validation
+    if '@' not in email or '.' not in email:
+        await update.message.reply_text(
+            "❌ Ongeldig email adres. Probeer opnieuw of kies een andere optie:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Annuleren", callback_data="cancel_email")],
+                [InlineKeyboardButton("📧 Gebruik standaard email", callback_data="use_default_email")]
+            ])
         )
-        
-        # Send the email
-        success, message = await email_service.send_report(
-            html_content=html_content,
-            recipient_email=recipient_email,
-            church_name=church_name,
-            date=date
+        return
+    
+    # Clear awaiting state
+    context.user_data['awaiting_email'] = False
+    
+    # Get stored report details
+    report_details = context.user_data.get('pending_report', {})
+    if not report_details:
+        await update.message.reply_text(
+            "❌ Rapport details niet gevonden. Start opnieuw.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Start opnieuw", callback_data="start")
+            ]])
         )
-        
-        return success, message
-        
-    except Exception as e:
-        error_msg = f"Email verzenden mislukt: {str(e)}"
-        logging.error(error_msg, exc_info=True)
-        return False, error_msg
+        return
+    
+    # Send report
+    await send_report_to_email(
+        update,
+        context,
+        report_details['church_name'],
+        report_details['date'],
+        email
+    )
+
+async def send_report_to_email(update, context, church_name: str, date: str, email_recipient: str):
+    """
+    Send the report to the specified email address.
+    
+    Args:
+        update: The update object
+        context: The context object
+        church_name (str): Name of the church
+        date (str): Date of the service
+        email_recipient (str): Email address to send the report to
+    """
+    email_domain = os.getenv('EMAIL_DOMAIN')
+    if not email_domain:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Email configuratie ontbreekt. Neem contact op met de beheerder.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Start opnieuw", callback_data="start")
+            ]])
+        )
+        return
+
+    report_manager = ReportManager(ROOT_FOLDER)
+    html_report_filename, _ = report_manager.get_report_path(church_name, date)
+
+    if not html_report_filename:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Rapport niet gevonden. Kies een andere optie:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+            ])
+        )
+        return
+
+    # Send the email
+    asyncio.create_task(send_html_report(
+        html_report_filename,
+        church_name,
+        date,
+        email_recipient,
+        email_domain
+    ))
+
+    # Show options to continue
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"📧 Rapport wordt verzonden naar {email_recipient}. Wat wil je nu doen?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+            [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+        ])
+    )
     
 # Add keyboard helper function
 def get_report_options_keyboard(church_name: str, date: str = None) -> InlineKeyboardMarkup:
@@ -1184,59 +1267,51 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cancellation_flags[query.message.chat_id] = True
         await query.edit_message_text("🔙 Terug naar start...")
         await start(update, context)
-        
-    # Simplified email report handling
+
+    # Handle email-related actions
     elif query.data.startswith("email_report_"):
-        parts = query.data.split('_')
-        church_name = '_'.join(parts[2:-1])
-        target_date = parts[-1]
-        
-        email_recipient = os.getenv('EMAIL_RECIPIENT')
-        email_domain = os.getenv('EMAIL_DOMAIN')
-        
-        if not all([email_recipient, email_domain]):
-            keyboard = [
-                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
-                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
-            ]
-            await query.edit_message_text(
-                "⚠️ Email configuratie ontbreekt. Kies een andere optie:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-
-        report_manager = ReportManager(ROOT_FOLDER)
-        html_report_filename, _ = report_manager.get_report_path(church_name, target_date)
-
-        if not html_report_filename:
-            keyboard = [
-                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
-                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
-            ]
-            await query.edit_message_text(
-                "❌ Rapport niet gevonden. Kies een andere optie:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-
-        # Fire and forget email sending
-        asyncio.create_task(send_html_report(
-            html_report_filename,
-            church_name,
-            target_date,
-            email_recipient,
-            email_domain
-        ))
-
-        # Immediately show options to continue
+        await request_email(update, context)
+    
+    elif query.data == "cancel_email":
+        context.user_data.clear()
         keyboard = [
             [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
             [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
         ]
         await query.edit_message_text(
-            "📧 Rapport wordt verzonden. Wat wil je nu doen?",
+            "❌ Email verzending geannuleerd. Wat wil je nu doen?",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+    
+    elif query.data == "use_default_email":
+        email_recipient = os.getenv('EMAIL_RECIPIENT')
+        if not email_recipient:
+            keyboard = [
+                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+            ]
+            await query.edit_message_text(
+                "⚠️ Standaard email niet geconfigureerd. Kies een andere optie:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+            
+        report_details = context.user_data.get('pending_report', {})
+        if report_details:
+            await send_report_to_email(
+                update,
+                context,
+                report_details['church_name'],
+                report_details['date'],
+                email_recipient
+            )
+        else:
+            await query.edit_message_text(
+                "❌ Rapport details niet gevonden. Start opnieuw.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Start opnieuw", callback_data="start")
+                ]])
+            )
 
     # Handle church selection
     elif query.data.startswith("church_"):
@@ -1363,6 +1438,11 @@ async def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        lambda u, c: handle_email_input(u, c) if c.user_data.get('awaiting_email')
+        else handle_church_input(u, c)
+    ))
     
     print("Bot wordt gestart...")
     await application.initialize()
@@ -1374,7 +1454,11 @@ def run_application():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_church_input))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        lambda u, c: handle_email_input(u, c) if c.user_data.get('awaiting_email')
+        else handle_church_input(u, c)
+    ))
     
     print("Bot wordt gestart...")
     application.run_polling(poll_interval=1.0, timeout=20)
