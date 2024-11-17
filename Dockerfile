@@ -14,6 +14,8 @@ COPY transcribe.py .
 COPY readme.md .
 COPY NieuweKerkToevoegen.png .
 COPY churches.json .
+COPY html_report_prompt.txt .
+COPY .env .
 
 # Ensure any required environment variables are accessible
 ENV DEEPGRAM_API_KEY=""
