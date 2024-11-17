@@ -146,6 +146,51 @@ class EmailService:
             self.logger.error(f"SendGrid API error: {str(e)}", exc_info=True)
             raise
 
+async def send_html_report_email(
+    html_report_filename: str,
+    church_name: str,
+    date: str,
+    recipient_email: str,
+    domain: str
+) -> Tuple[bool, str]:
+    """
+    Send HTML report via email.
+    
+    Args:
+        html_report_filename: Path to the HTML report file
+        church_name: Name of the church
+        date: Date of the service
+        recipient_email: Recipient's email address
+        domain: Domain for the from address
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    try:
+        # Read the HTML report
+        with open(html_report_filename, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        
+        # Initialize email service
+        email_service = EmailService(
+            api_key=os.getenv('SENDGRID_API_KEY'),
+            default_from_domain=domain
+        )
+        
+        # Send the email
+        success, message = await email_service.send_report(
+            html_content=html_content,
+            recipient_email=recipient_email,
+            church_name=church_name,
+            date=date
+        )
+        
+        return success, message
+        
+    except Exception as e:
+        error_msg = f"Email verzenden mislukt: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        return False, error_msg
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id if update.message else update.callback_query.message.chat_id
@@ -595,12 +640,7 @@ class ReportManager:
 async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Request email address from user.
-    
-    Args:
-        update (Update): The update object
-        context (ContextTypes.DEFAULT_TYPE): The context object
     """
-    # Store the report details in context for later use
     parts = update.callback_query.data.split('_')
     context.user_data['pending_report'] = {
         'church_name': '_'.join(parts[2:-1]),
@@ -617,22 +657,16 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     
-    # Set state to wait for email input
     context.user_data['awaiting_email'] = True
 
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle email input from user.
-    
-    Args:
-        update (Update): The update object
-        context (ContextTypes.DEFAULT_TYPE): The context object
     """
     if not context.user_data.get('awaiting_email'):
         return
     
     email = update.message.text.strip()
-    # Basic email validation
     if '@' not in email or '.' not in email:
         await update.message.reply_text(
             "❌ Ongeldig email adres. Probeer opnieuw of kies een andere optie:",
@@ -643,10 +677,8 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
-    # Clear awaiting state
     context.user_data['awaiting_email'] = False
     
-    # Get stored report details
     report_details = context.user_data.get('pending_report', {})
     if not report_details:
         await update.message.reply_text(
@@ -657,7 +689,6 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
-    # Send report
     await send_report_to_email(
         update,
         context,
@@ -666,16 +697,10 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         email
     )
 
+
 async def send_report_to_email(update, context, church_name: str, date: str, email_recipient: str):
     """
     Send the report to the specified email address.
-    
-    Args:
-        update: The update object
-        context: The context object
-        church_name (str): Name of the church
-        date (str): Date of the service
-        email_recipient (str): Email address to send the report to
     """
     email_domain = os.getenv('EMAIL_DOMAIN')
     if not email_domain:
@@ -703,24 +728,33 @@ async def send_report_to_email(update, context, church_name: str, date: str, ema
         return
 
     # Send the email
-    asyncio.create_task(send_html_report(
+    success, message = await send_html_report_email(
         html_report_filename,
         church_name,
         date,
         email_recipient,
         email_domain
-    ))
-
-    # Show options to continue
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"📧 Rapport wordt verzonden naar {email_recipient}. Wat wil je nu doen?",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
-            [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
-        ])
     )
-    
+
+    # Show result message
+    if success:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"📧 Rapport is verzonden naar {email_recipient}. Wat wil je nu doen?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+            ])
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Fout bij verzenden email: {message}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Probeer opnieuw", callback_data=f"email_report_{church_name}_{date}")],
+                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+            ])
+        )
 # Add keyboard helper function
 def get_report_options_keyboard(church_name: str, date: str = None) -> InlineKeyboardMarkup:
     """
