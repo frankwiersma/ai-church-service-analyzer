@@ -1,4 +1,16 @@
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import asyncio
+from typing import Tuple
+import logging
+
+from sendgrid.helpers.mail import (
+    Mail, 
+    Email, 
+    To, 
+    Content, 
+    HtmlContent
+)
 import os
 import requests
 import json
@@ -69,6 +81,71 @@ class ChurchManager:
 # Dictionary to store cancellation flags for each chat
 cancellation_flags = {}
 last_message_data = {}
+
+class EmailService:
+    def __init__(self, api_key: str, default_from_domain: str):
+        """Initialize EmailService with SendGrid API key and default from domain."""
+        self.api_key = api_key
+        self.default_from_domain = default_from_domain
+        self.client = SendGridAPIClient(api_key)
+        self.logger = logging.getLogger(__name__)
+
+    async def send_report(
+        self,
+        html_content: str,
+        recipient_email: str,
+        church_name: str,
+        date: str
+    ) -> Tuple[bool, str]:
+        """
+        Asynchronously send an HTML report via email using SendGrid.
+        
+        Args:
+            html_content: The HTML content of the report
+            recipient_email: The recipient's email address
+            church_name: Name of the church for the subject line
+            date: Date of the service
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            # Create message object
+            message = Mail(
+                from_email=f'no-reply@{self.default_from_domain}',
+                to_emails=recipient_email,
+                subject=f'Preekanalyse - {church_name} - {date}',
+                html_content=html_content
+            )
+
+            # Send email in the executor to prevent blocking
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self._send_email,
+                message
+            )
+
+            return True, "Email succesvol verzonden"
+
+        except Exception as e:
+            error_msg = f"Email verzenden mislukt: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            return False, error_msg
+
+    def _send_email(self, message: Mail) -> None:
+        """
+        Execute the actual email sending operation.
+        This runs in an executor to prevent blocking.
+        """
+        try:
+            response = self.client.send(message)
+            if response.status_code not in (200, 201, 202):
+                raise Exception(f"SendGrid returned status code {response.status_code}")
+        except Exception as e:
+            self.logger.error(f"SendGrid API error: {str(e)}", exc_info=True)
+            raise
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id if update.message else update.callback_query.message.chat_id
@@ -224,13 +301,21 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         os.makedirs(church_folder)
 
     date_str = parse_date(start_time)
-    sanitized_title = sanitize_filename(title)  # Sanitize the title consistently
+    sanitized_title = sanitize_filename(title)
     folder_name = f"{date_str}_{sanitized_title}"
     recording_folder = os.path.join(church_folder, folder_name)
 
-    # Check if analysis.txt already exists
+    # Check if analysis already exists
     analysis_filename = os.path.join(recording_folder, 'analysis.txt')
-    if os.path.exists(analysis_filename):
+    html_report_filename = os.path.join(recording_folder, 'report.html')
+    
+    if os.path.exists(analysis_filename) and os.path.exists(html_report_filename):
+        # Store the report path in context
+        if hasattr(query.message, '_bot') and hasattr(query.message._bot, 'context'):
+            query.message._bot.context.user_data['last_report_path'] = html_report_filename
+            query.message._bot.context.user_data['last_report_date'] = date_str
+            query.message._bot.context.user_data['last_church_name'] = church_name
+        
         with open(analysis_filename, 'r', encoding='utf-8') as f:
             analysis_text = f.read()
         return analysis_text
@@ -242,8 +327,8 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
     if not download_url:
         return "Geen download URL gevonden voor de opname."
 
-    # Define filenames based on the file type, using sanitized title
-    base_filename = f"{date_str}_{sanitized_title}"  # Use the same sanitized title as folder
+    # Define filenames based on the file type
+    base_filename = f"{date_str}_{sanitized_title}"
     if file_type == 'mp4':
         downloaded_filename = os.path.join(recording_folder, f"{base_filename}.mp4")
         final_mp3_filename = os.path.join(recording_folder, f"{base_filename}.mp3")
@@ -259,7 +344,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
 
         await asyncio.sleep(1)
         
-        # Convert only if it's an MP4 file
+        # Convert if it's an MP4 file
         if file_type == 'mp4':
             await safe_edit_message_text(
                 query,
@@ -308,6 +393,7 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         if cancellation_flags[query.message.chat_id]:
             return "Bewerking geannuleerd."
 
+    # Generate Analysis
     await safe_edit_message_text(
         query,
         "🤖 Voorbereiding analyse...",
@@ -331,10 +417,293 @@ async def process_selected_service(api_url: str, service_id: str, query: Update.
         date_str
     )
 
-    with open(analysis_filename, 'r', encoding='utf-8') as f:
-        analysis_text = f.read()
+    if cancellation_flags[query.message.chat_id]:
+        return "Bewerking geannuleerd."
 
-    return analysis_text
+    # Read the generated analysis
+    try:
+        with open(analysis_filename, 'r', encoding='utf-8') as f:
+            analysis_content = f.read()
+    except Exception as e:
+        print(f"Error reading analysis file: {e}")
+        return "Er is een fout opgetreden bij het lezen van de analyse."
+
+    # Generate HTML Report with analysis content
+    await safe_edit_message_text(
+        query,
+        "📊 HTML rapport wordt gegenereerd...",
+        InlineKeyboardMarkup([[InlineKeyboardButton("Annuleren", callback_data="cancel")]])
+    )
+
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        generate_html_report,
+        html_report_filename,
+        church_name,
+        date_str,
+        analysis_content
+    )
+
+    if cancellation_flags[query.message.chat_id]:
+        return "Bewerking geannuleerd."
+
+    # Store the report path in context
+    if hasattr(query.message, '_bot') and hasattr(query.message._bot, 'context'):
+        query.message._bot.context.user_data['last_report_path'] = html_report_filename
+        query.message._bot.context.user_data['last_report_date'] = date_str
+        query.message._bot.context.user_data['last_church_name'] = church_name
+
+    try:
+        with open(analysis_filename, 'r', encoding='utf-8') as f:
+            analysis_text = f.read()
+        return analysis_text
+    except Exception as e:
+        print(f"Error reading analysis file: {e}")
+        return "Er is een fout opgetreden bij het lezen van de analyse."
+
+def clean_html_report(file_path):
+    """
+    Cleans the HTML report file by removing the ```html at the start and the closing ```
+    at the end of the file, leaving valid HTML tags intact.
+    Args:
+        file_path (str): Path to the HTML file to clean.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+        
+        # Strip ```html from the first line and ``` from the last line
+        if lines:
+            if lines[0].strip() == "```html":
+                lines = lines[1:]  # Remove the first line
+            if lines[-1].strip() == "```":
+                lines = lines[:-1]  # Remove the last line
+            
+            with open(file_path, 'w', encoding='utf-8') as file:
+                file.writelines(lines)
+            print(f"✅ HTML report cleaned and saved: {file_path}")
+        else:
+            print("❌ HTML report is empty.")
+    except Exception as e:
+        print(f"❌ Error cleaning HTML report: {e}")
+
+
+
+def generate_html_report(html_report_filename, church_name, date, analysis_content):
+    try:
+        prompt_template = load_html_report_prompt()
+        if not prompt_template:
+            print("❌ HTML report prompt not loaded. Skipping HTML report generation.")
+            return
+        
+        # Create the dynamic prompt with the church name, date, and analysis only
+        prompt = f"Church: {church_name}\nDate: {date}\n\nAnalysis Content:\n{analysis_content}\n\n{prompt_template}"
+        
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash-8b')
+        result = model.generate_content(prompt)
+        
+        if result and result.text:
+            with open(html_report_filename, 'w', encoding='utf-8') as f:
+                f.write(result.text)
+            print(f"✅ HTML report saved to {html_report_filename}")
+            
+            # Clean the generated HTML report
+            clean_html_report(html_report_filename)
+        else:
+            print("❌ Failed to generate HTML report.")
+    except Exception as e:
+        print(f"❌ Error generating HTML report: {e}")
+
+
+# Add function to load HTML report prompt
+def load_html_report_prompt():
+    prompt_file = os.path.join(os.path.dirname(__file__), 'html_report_prompt.txt')
+    try:
+        with open(prompt_file, 'r', encoding='utf-8') as file:
+            prompt = file.read()
+            print(f"📄 HTML rapport prompt geladen uit {prompt_file}")
+            return prompt
+    except Exception as e:
+        print(f"❌ Laden van HTML rapport prompt mislukt: {e}")
+        return None
+    
+
+class ReportManager:
+    def __init__(self, root_folder: str):
+        self.root_folder = root_folder
+
+    def get_report_path(self, church_name: str, target_date: str) -> tuple[str | None, str | None]:
+        """
+        Get the path to a report file for a specific church and date.
+        
+        Args:
+            church_name (str): Name of the church
+            target_date (str): Date in YYYY-MM-DD format
+            
+        Returns:
+            tuple: (report_path, folder_name) or (None, None) if not found
+        """
+        try:
+            # Sanitize church name for filesystem
+            safe_church_name = self._sanitize_name(church_name)
+            church_folder = os.path.join(self.root_folder, safe_church_name)
+            
+            if not os.path.exists(church_folder):
+                print(f"Church folder not found: {church_folder}")
+                return None, None
+
+            # Look for exact date match in folder names
+            for folder_name in os.listdir(church_folder):
+                folder_path = os.path.join(church_folder, folder_name)
+                
+                # Skip if not a directory
+                if not os.path.isdir(folder_path):
+                    continue
+                
+                # Extract date from folder name and compare with target date
+                folder_date = folder_name.split('_')[0]
+                if folder_date == target_date:
+                    # Check for report file
+                    report_path = os.path.join(folder_path, 'report.html')
+                    if os.path.exists(report_path):
+                        print(f"Found report at: {report_path}")
+                        return report_path, folder_name
+            
+            print(f"No report found for {church_name} on {target_date}")
+            return None, None
+            
+        except Exception as e:
+            print(f"Error finding report: {str(e)}")
+            return None, None
+
+    def _sanitize_name(self, name: str) -> str:
+        """Sanitize name for filesystem use"""
+        # Replace biblical reference characters and invalid filename chars
+        name = name.replace(':', '_').replace('/', '_')
+        invalid_chars = r'<>"\|?*'
+        for char in invalid_chars:
+            name = name.replace(char, '')
+        
+        # Replace spaces and clean up underscores
+        name = name.replace(' ', '_')
+        while '__' in name:
+            name = name.replace('__', '_')
+        return name.strip('_')
+
+# Update the send_html_report function to use the new EmailService
+async def send_html_report(
+    html_report_filename: str,
+    church_name: str,
+    date: str,
+    recipient_email: str,
+    domain: str
+) -> Tuple[bool, str]:
+    """
+    Send HTML report via email using the EmailService.
+    
+    Args:
+        html_report_filename: Path to the HTML report file
+        church_name: Name of the church
+        date: Date of the service
+        recipient_email: Recipient's email address
+        domain: Domain for the from address
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    try:
+        # Read the HTML report
+        with open(html_report_filename, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        
+        # Initialize email service
+        email_service = EmailService(
+            api_key=os.getenv('SENDGRID_API_KEY'),
+            default_from_domain=domain
+        )
+        
+        # Send the email
+        success, message = await email_service.send_report(
+            html_content=html_content,
+            recipient_email=recipient_email,
+            church_name=church_name,
+            date=date
+        )
+        
+        return success, message
+        
+    except Exception as e:
+        error_msg = f"Email verzenden mislukt: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        return False, error_msg
+    
+# Add keyboard helper function
+def get_report_options_keyboard(church_name: str, date: str = None) -> InlineKeyboardMarkup:
+    """
+    Creates keyboard with report options
+    
+    Args:
+        church_name (str): Name of the church
+        date (str): Date of the service in YYYY-MM-DD format
+    """
+    callback_data = f"email_report_{church_name}_{date}" if date else f"email_report_{church_name}"
+    keyboard = [
+        [InlineKeyboardButton("📧 Verstuur rapport per email", callback_data=callback_data)],
+        [InlineKeyboardButton("📊 Analyseer een andere preek", callback_data="start")],
+        [InlineKeyboardButton("❌ Afsluiten", callback_data="cancel")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def chunk_message(text: str, max_length: int = 4096) -> list:
+    """
+    Split message into chunks that respect Telegram's limits.
+    Tries to split on paragraph boundaries when possible.
+    """
+    if len(text) <= max_length:
+        return [text]
+
+    chunks = []
+    current_chunk = ""
+    
+    # Split text into paragraphs
+    paragraphs = text.split('\n\n')
+
+    for paragraph in paragraphs:
+        # If this paragraph alone is longer than max length, split it
+        if len(paragraph) > max_length:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            
+            # Split long paragraph into chunks
+            while paragraph:
+                if len(paragraph) > max_length:
+                    # Try to split on a sentence boundary
+                    split_point = paragraph[:max_length].rfind('. ') + 1
+                    if split_point <= 0:  # No sentence boundary found
+                        split_point = max_length
+                    chunks.append(paragraph[:split_point])
+                    paragraph = paragraph[split_point:].lstrip()
+                else:
+                    current_chunk = paragraph
+                    paragraph = ""
+        
+        # If adding this paragraph would exceed max length
+        elif len(current_chunk) + len(paragraph) + 2 > max_length:
+            chunks.append(current_chunk)
+            current_chunk = paragraph
+        else:
+            # Add paragraph to current chunk
+            if current_chunk:
+                current_chunk += '\n\n'
+            current_chunk += paragraph
+
+    # Add the last chunk if not empty
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
 
 def escape_markdown_v2_text(text: str) -> str:
     """
@@ -358,52 +727,100 @@ def escape_markdown_v2_text(text: str) -> str:
 
     return formatted_text
 
+
+
 async def handle_analysis_response(query, analysis, church, context):
-    if analysis:
-        max_length = 4096
+    """
+    Handles the response after analysis is complete, including displaying the analysis
+    and providing options for further actions.
+    """
+    if not analysis:
+        await query.edit_message_text(
+            "❌ Genereren van analyse is mislukt. Probeer opnieuw.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
+        )
+        return
+
+    try:
+        # Use the date stored in context instead of looking for the newest folder
+        current_date = context.user_data.get('current_service_date')
+        
+        if not current_date:
+            # Fallback to finding the date from folder name only if not in context
+            church_folder = os.path.join(ROOT_FOLDER, sanitize_filename(church))
+            if os.path.exists(church_folder):
+                folders = [f for f in os.listdir(church_folder) if os.path.isdir(os.path.join(church_folder, f))]
+                if folders:
+                    newest_folder = max(folders, key=lambda x: os.path.getctime(os.path.join(church_folder, x)))
+                    current_date = newest_folder.split('_')[0]
+
+        # Convert to string if not already
         if isinstance(analysis, bytes):
             analysis = analysis.decode('utf-8')
+        elif not isinstance(analysis, str):
+            analysis = str(analysis)
+
+        # Split into chunks
+        chunks = chunk_message(analysis)
         
         try:
-            # Format the church name
+            # Try with markdown formatting
             escaped_church = escape_markdown_v2_text(church)
+            escaped_chunks = [escape_markdown_v2_text(chunk) for chunk in chunks]
             
-            # Split and format messages
-            messages = [analysis[i:i+max_length] for i in range(0, len(analysis), max_length)]
-            for i, message in enumerate(messages):
-                escaped_message = escape_markdown_v2_text(message)
-                if i == 0:
-                    await query.edit_message_text(
-                        text=f"📊 Analyse voor {escaped_church}:\n\n{escaped_message}",
-                        parse_mode='MarkdownV2'
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=escaped_message,
-                        parse_mode='MarkdownV2'
-                    )
+            # Send first chunk with header
+            first_message = f"📊 Analyse voor {escaped_church}:\n\n{escaped_chunks[0]}"
+            await query.edit_message_text(
+                text=first_message,
+                parse_mode='MarkdownV2'
+            )
             
-            keyboard = [[InlineKeyboardButton("Analyseer een andere preek", callback_data="start")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            # Send remaining chunks
+            for chunk in escaped_chunks[1:]:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=chunk,
+                    parse_mode='MarkdownV2'
+                )
+
+        except Exception as markdown_error:
+            print(f"Markdown formatting failed: {markdown_error}. Falling back to plain text.")
+            # Fallback to plain text if markdown fails
+            first_message = f"📊 Analyse voor {church}:\n\n{chunks[0]}"
+            await query.edit_message_text(text=first_message)
+            
+            for chunk in chunks[1:]:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=chunk
+                )
+        
+        # Send options message with the correct date
+        if current_date:
+            print(f"Using date for report options: {current_date}")  # Debug log
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="Wil je een andere preek analyseren?",
-                reply_markup=reply_markup
+                text="Wat wil je nu doen?",
+                reply_markup=get_report_options_keyboard(church, current_date)
             )
-        except Exception as e:
-            print(f"Formatting error: {str(e)}")
-            # Log the problematic text for debugging
-            print(f"Problematic text sample: {analysis[:200]}")
-            # Fallback to unformatted
-            await query.edit_message_text(
-                text=f"📊 Analyse voor {church}:\n\n{analysis}",
-                parse_mode=None
+        else:
+            print("No date found for report options")  # Debug log
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ Kan datum niet bepalen. Probeer opnieuw.",
+                reply_markup=get_report_options_keyboard(church)
             )
-    else:
-        await query.edit_message_text("❌ Genereren van analyse is mislukt. Probeer het opnieuw.")
-
+        
+    except Exception as e:
+        print(f"Error in handle_analysis_response: {str(e)}")
+        await query.edit_message_text(
+            "❌ Er is een fout opgetreden bij het tonen van de analyse.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
+        )
 async def safe_edit_message_text(query, new_text, reply_markup=None):
+    """
+    Safely edit message text, handling long messages by splitting them and preserving markdown.
+    """
     message_id = query.message.message_id
     chat_id = query.message.chat_id
     current_time = time.time()
@@ -412,24 +829,47 @@ async def safe_edit_message_text(query, new_text, reply_markup=None):
     
     if new_text != last_text and (current_time - last_timestamp > 1):
         try:
-            escaped_text = escape_markdown_v2_text(new_text)
-            await query.edit_message_text(
-                text=escaped_text,
-                reply_markup=reply_markup,
-                parse_mode='MarkdownV2'
-            )
+            # Split message if too long
+            chunks = chunk_message(new_text)
+            
+            try:
+                # Try with markdown formatting
+                escaped_chunks = [escape_markdown_v2_text(chunk) for chunk in chunks]
+                
+                # Update first chunk
+                await query.edit_message_text(
+                    text=escaped_chunks[0],
+                    reply_markup=reply_markup,
+                    parse_mode='MarkdownV2'
+                )
+                
+                # Send additional chunks if any
+                for chunk in escaped_chunks[1:]:
+                    await query.message.reply_text(
+                        text=chunk,
+                        parse_mode='MarkdownV2'
+                    )
+                
+            except Exception as markdown_error:
+                print(f"Markdown formatting failed: {markdown_error}. Falling back to plain text.")
+                # Fallback to plain text if markdown fails
+                await query.edit_message_text(
+                    text=chunks[0],
+                    reply_markup=reply_markup
+                )
+                
+                for chunk in chunks[1:]:
+                    await query.message.reply_text(text=chunk)
+            
             last_message_data[(chat_id, message_id)] = (new_text, current_time)
+            
         except Exception as e:
-            print(f"Formatting error in safe_edit: {str(e)}")
-            # Log the problematic text for debugging
-            print(f"Problematic text sample: {new_text[:200]}")
-            # Fallback to unformatted
+            print(f"Error in safe_edit_message_text: {str(e)}")
+            # Try to send a simple error message
             await query.edit_message_text(
-                text=new_text,
-                reply_markup=reply_markup,
-                parse_mode=None
+                text="Er is een fout opgetreden bij het bijwerken van het bericht.",
+                reply_markup=reply_markup
             )
-
 async def download_file_with_progress(session, url, filename, query):
     """
     Downloads a file with progress updates and cancellation option.
@@ -711,7 +1151,9 @@ async def get_paginated_keyboard(churches: dict, page: int = 1, churches_per_pag
     
     return InlineKeyboardMarkup(keyboard)
 
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all button interactions in the Telegram bot."""
     query = update.callback_query
     await query.answer()
 
@@ -727,16 +1169,76 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Handle add church request
     if query.data == "add_church":
         await handle_add_church(update, context)
+        
+    # Handle start request
     elif query.data == "start":
         context.user_data['page'] = 1  # Reset page when starting over
         await start(update, context)
+        
+    # Handle cancel request
     elif query.data == "cancel":
         context.user_data.clear()
         cancellation_flags[query.message.chat_id] = True
-        await query.edit_message_text("🔙 Bewerking wordt geannuleerd... Terug naar start.")
+        await query.edit_message_text("🔙 Terug naar start...")
         await start(update, context)
+        
+    # Simplified email report handling
+    elif query.data.startswith("email_report_"):
+        parts = query.data.split('_')
+        church_name = '_'.join(parts[2:-1])
+        target_date = parts[-1]
+        
+        email_recipient = os.getenv('EMAIL_RECIPIENT')
+        email_domain = os.getenv('EMAIL_DOMAIN')
+        
+        if not all([email_recipient, email_domain]):
+            keyboard = [
+                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+            ]
+            await query.edit_message_text(
+                "⚠️ Email configuratie ontbreekt. Kies een andere optie:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
+        report_manager = ReportManager(ROOT_FOLDER)
+        html_report_filename, _ = report_manager.get_report_path(church_name, target_date)
+
+        if not html_report_filename:
+            keyboard = [
+                [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+                [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+            ]
+            await query.edit_message_text(
+                "❌ Rapport niet gevonden. Kies een andere optie:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
+        # Fire and forget email sending
+        asyncio.create_task(send_html_report(
+            html_report_filename,
+            church_name,
+            target_date,
+            email_recipient,
+            email_domain
+        ))
+
+        # Immediately show options to continue
+        keyboard = [
+            [InlineKeyboardButton("📊 Analyseer andere preek", callback_data="start")],
+            [InlineKeyboardButton("❌ Terug naar kerkenlijst", callback_data="start")]
+        ]
+        await query.edit_message_text(
+            "📧 Rapport wordt verzonden. Wat wil je nu doen?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    # Handle church selection
     elif query.data.startswith("church_"):
         church = query.data.replace("church_", "")
         await query.edit_message_text(
@@ -758,22 +1260,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=reply_markup
                 )
             else:
-                await query.edit_message_text("❌ Geen preken gevonden voor deze kerk.")
-                keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.message.reply_text(
-                    "Klik hier om terug te gaan:",
-                    reply_markup=reply_markup
+                await query.edit_message_text(
+                    "❌ Geen preken gevonden voor deze kerk.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
                 )
         except Exception as e:
-            await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
-            keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text(
-                "Klik hier om terug te gaan:",
-                reply_markup=reply_markup
+            await query.edit_message_text(
+                "❌ Er is een fout opgetreden bij het ophalen van de preken.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
             )
 
+    # Handle date selection
     elif query.data.startswith("date_"):
         _, church, date = query.data.split("_", 2)
         church_manager = ChurchManager()
@@ -793,43 +1290,46 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     analysis = await process_selected_service(api_urls[church], service_id, query)
                     if cancellation_flags[query.message.chat_id]:
-                        await query.edit_message_text("🚫 Verwerking geannuleerd.")
-                        keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        await query.message.reply_text(
-                            "Klik hier om terug te gaan:",
-                            reply_markup=reply_markup
+                        await query.edit_message_text(
+                            "🚫 Verwerking geannuleerd.",
+                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
                         )
                         return
+
+                    context.user_data['current_service_date'] = date
                     await handle_analysis_response(query, analysis, church, context)
                 except Exception as e:
-                    await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
-                    keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    await query.message.reply_text(
-                        "Klik hier om terug te gaan:",
-                        reply_markup=reply_markup
+                    await query.edit_message_text(
+                        "❌ Er is een fout opgetreden bij het verwerken van de preek.",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
                     )
             else:
-                keyboard = [[InlineKeyboardButton(service["title"], callback_data=f"service_{church}_{service['id']}")]
+                keyboard = [[InlineKeyboardButton(service["title"], 
+                            callback_data=f"service_{church}_{service['id']}_{date}")]
                             for service in services]
                 keyboard.append([InlineKeyboardButton("Annuleren", callback_data="cancel")])
-                reply_markup = InlineKeyboardMarkup(keyboard)
                 await query.edit_message_text(
                     f"🕒 Selecteer de specifieke dienst voor {date}:",
-                    reply_markup=reply_markup
+                    reply_markup=InlineKeyboardMarkup(keyboard)
                 )
         else:
-            await query.edit_message_text("❌ Geen preken gevonden voor deze datum.")
-            keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text(
-                "Klik hier om terug te gaan:",
-                reply_markup=reply_markup
+            await query.edit_message_text(
+                "❌ Geen preken gevonden voor deze datum.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
             )
 
+    # Handle service selection
     elif query.data.startswith("service_"):
-        _, church, service_id = query.data.split("_", 2)
+        parts = query.data.split("_")
+        if len(parts) >= 4:
+            church = parts[1]
+            service_id = parts[2]
+            date = parts[3]
+        else:
+            church = parts[1]
+            service_id = parts[2]
+            date = None
+            
         cancellation_flags[query.message.chat_id] = False
         await query.edit_message_text(
             f"🔄 Geselecteerde preek van {church} wordt verwerkt...",
@@ -841,23 +1341,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             api_urls = church_manager.get_api_urls()
             analysis = await process_selected_service(api_urls[church], service_id, query)
             if cancellation_flags[query.message.chat_id]:
-                await query.edit_message_text("🚫 Verwerking geannuleerd.")
-                keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.message.reply_text(
-                    "Klik hier om terug te gaan:",
-                    reply_markup=reply_markup
+                await query.edit_message_text(
+                    "🚫 Verwerking geannuleerd.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
                 )
                 return
+                
+            if date:
+                context.user_data['current_service_date'] = date
+                
             await handle_analysis_response(query, analysis, church, context)
         except Exception as e:
-            await query.edit_message_text(f"❌ Er is een fout opgetreden: {str(e)}")
-            keyboard = [[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text(
-                "Klik hier om terug te gaan:",
-                reply_markup=reply_markup
+            await query.edit_message_text(
+                "❌ Er is een fout opgetreden bij het verwerken van de preek.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Terug naar kerkenlijst", callback_data="start")]])
             )
+
+
 
 async def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()

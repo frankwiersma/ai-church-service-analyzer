@@ -1,0 +1,245 @@
+[ANALYSIS CONTENT]
+{analysis_content will be inserted here}
+[/ANALYSIS CONTENT]
+
+Using the analysis content above, create an HTML report that matches the following template exactly. Parse the analysis to extract the service details and generate clean HTML output.
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Church Service Overview</title>
+    <style>
+        :root {
+            --primary: #2d3748;
+            --secondary: #4a5568;
+            --accent: #3182ce;
+            --background: #f7fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --highlight: #ebf8ff;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--background);
+            color: var(--primary);
+            line-height: 1.6;
+            margin: 0;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        .header {
+            background: linear-gradient(to right, var(--primary), var(--secondary));
+            color: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .content {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .section {
+            background: var(--card);
+            padding: 2rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+
+        .section:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .highlight {
+            background: var(--highlight);
+            border-color: var(--accent);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+
+        h2 {
+            color: var(--secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .date {
+            margin-top: 1rem;
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .emoji {
+            font-size: 1.5rem;
+        }
+
+        ul {
+            margin: 0;
+            padding-left: 1.5rem;
+            list-style-type: none;
+        }
+
+        li {
+            margin-bottom: 1rem;
+            position: relative;
+            padding-left: 1.5rem;
+        }
+
+        li::before {
+            content: "•";
+            color: var(--accent);
+            position: absolute;
+            left: 0;
+            font-weight: bold;
+        }
+
+        p {
+            margin: 0;
+            line-height: 1.8;
+        }
+
+        .tag {
+            display: inline-block;
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            margin: 0.25rem;
+            font-size: 0.875rem;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+            
+            .section {
+                padding: 1.5rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            h2 {
+                font-size: 1.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 Dienst Overzicht</h1>
+            <div class="date">[DATE] - [CHURCH], [AREA]</div>
+        </div>
+        
+        <div class="content">
+            <div class="section highlight">
+                <h2><span class="emoji">💡</span>Kernboodschap</h2>
+                <p>[CORE_MESSAGE]</p>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">👤</span>Voorganger(s) & Team</h2>
+                <ul>
+                    [TEAM_MEMBERS]
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">📝</span>Thema & Lezingen</h2>
+                <p>[THEME]</p>
+                <div style="margin-top: 1rem">
+                    [BIBLE_READINGS]
+                </div>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">📖</span>Preek Samenvatting</h2>
+                <p>[SERMON_SUMMARY]</p>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">📢</span>Hoofdpunten Preek</h2>
+                <ul>
+                    [SERMON_MAIN_POINTS]
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">🏢</span>Gemeenteactiviteiten</h2>
+                <ul>
+                    [ACTIVITIES]
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">💰</span>Collectes</h2>
+                <ul>
+                    [COLLECTIONS]
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2><span class="emoji">🙏</span>Gebedspunten</h2>
+                <ul>
+                    [PRAYER_POINTS]
+                </ul>
+            </div>
+
+            <div class="section highlight">
+                <h2><span class="emoji">💭</span>Afsluitende Gedachte</h2>
+                <p>[CLOSING_THOUGHT]</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+
+Content Replacement Rules:
+
+1. [DATE] - Format as "DD Month YYYY" in Dutch
+2. [CHURCH] - Church name from analysis
+3. [AREA] - Area from analysis
+4. [CORE_MESSAGE] - Core message as single paragraph
+5. [TEAM_MEMBERS] - Each member as: <li>{name} ({role})</li>
+6. [THEME] - Theme as single paragraph
+7. [BIBLE_READINGS] - Each reading as: <div class="tag">{reference}</div>
+8. [SERMON_SUMMARY] - Full sermon summary as single paragraph
+9. [SERMON_MAIN_POINTS] - Each point as: <li>{point}</li>
+10. [ACTIVITIES] - Each activity as: <li>{description}</li>
+11. [COLLECTIONS] - Each collection as: <li><strong>{purpose}:</strong> {description}</li>
+12. [PRAYER_POINTS] - Each point as: <li>{point}</li>
+13. [CLOSING_THOUGHT] - Closing thought as single paragraph
+
+Styling:
+- Use the CSS styling provided in the template exactly as is. Don't be lazy and change it or leave it out.
+
+Error Handling:
+- For missing optional sections: Remove entire section div
+- For missing required fields: Use "Geen informatie beschikbaar"
+- Maintain all HTML structure and styling exactly as shown
