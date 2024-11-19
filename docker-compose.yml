@@ -13,6 +13,8 @@ services:
       - SENDGRID_API_KEY=${SENDGRID_API_KEY}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - EMAIL_DOMAIN=${EMAIL_DOMAIN}
+      - EMAIL_RECIPIENT=${EMAIL_RECIPIENT}
     volumes:
       - type: bind
         source: ./processed_services
