@@ -8,11 +8,13 @@ services:
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - AUTHORIZATION_TOKEN=${AUTHORIZATION_TOKEN}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - RECENT_AMOUNT=${RECENT_AMOUNT}
       - TRANSCRIPTION_SERVICE=${TRANSCRIPTION_SERVICE}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
     volumes:
       - type: bind
-        source: ./recordings
-        target: /app/recordings
+        source: ./processed_services
+        target: /app/processed_services
     restart: unless-stopped

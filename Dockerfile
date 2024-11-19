@@ -4,16 +4,16 @@ FROM python:3.10-slim
 # Set the working directory
 WORKDIR /app
 
+# Install cron
+RUN apt-get update && apt-get install -y cron
+
 # Copy only the necessary files (excluding recordings folder)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files (explicitly exclude recordings)
-COPY analyses_prompt.txt .
-COPY transcribe.py .
+COPY analysis_prompt.txt .
 COPY readme.md .
-COPY NieuweKerkToevoegen.png .
-COPY churches.json .
 COPY html_report_prompt.txt .
 COPY .env .
 
@@ -21,15 +21,19 @@ COPY .env .
 ENV DEEPGRAM_API_KEY=""
 ENV GEMINI_API_KEY=""
 ENV AUTHORIZATION_TOKEN=""
-ENV TELEGRAM_BOT_TOKEN=""
 ENV RECENT_AMOUNT=1
 ENV TRANSCRIPTION_SERVICE="deepgram"
-
-# Expose port if necessary (e.g., for the bot server)
-EXPOSE 5000
+ENV SENDGRID_API_KEY=""
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+ENV NEXT_PUBLIC_SUPABASE_URL=""
 
 # Create directory for mounting
-RUN mkdir -p /app/recordings
+RUN mkdir -p /app/processed_services
 
-# Run the main script when the container starts
-CMD ["python", "transcribe.py"]
+# Add crontab file
+RUN echo "0 * * * * cd /app && python jobschedule.py" > /etc/cron.d/jobschedule
+RUN chmod 0644 /etc/cron.d/jobschedule
+RUN crontab /etc/cron.d/jobschedule
+
+# Run cron in the foreground
+CMD ["cron", "-f"]
