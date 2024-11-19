@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files (explicitly exclude recordings)
+COPY jobschedule.py .
 COPY analysis_prompt.txt .
 COPY readme.md .
 COPY html_report_prompt.txt .
