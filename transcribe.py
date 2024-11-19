@@ -1169,7 +1169,7 @@ def generate_analysis(extracted_filename, analysis_filename, church_name, date):
 
 
 def load_analysis_prompt():
-    prompt_file = os.path.join(os.path.dirname(__file__), 'analyses_prompt.txt')
+    prompt_file = os.path.join(os.path.dirname(__file__), 'analysis_prompt.txt')
     try:
         with open(prompt_file, 'r', encoding='utf-8') as file:
             prompt = file.read()
