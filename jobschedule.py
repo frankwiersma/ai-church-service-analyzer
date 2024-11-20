@@ -211,7 +211,6 @@ class ChurchServiceProcessor:
             
             # Store the full API response for media lookup
             self.last_api_response = data
-            print("API Response:", json.dumps(data, indent=2))  # Debug log
             
             if not data.get('data'):
                 print(f"No services found for church {church_id}")
