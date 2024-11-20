@@ -5,7 +5,13 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # Install cron
-RUN apt-get update && apt-get install -y cron
+RUN apt-get update && apt-get install -y \
+    cron \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy only the necessary files (excluding recordings folder)
 COPY requirements.txt .
