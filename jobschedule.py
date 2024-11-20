@@ -12,7 +12,7 @@ from supabase import create_client, Client
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import logging
-from telegram.ext import Updater
+import telegram
 
 # Load environment variables
 load_dotenv()
@@ -20,12 +20,12 @@ load_dotenv()
 # Initialize Telegram bot
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
+bot = telegram.Bot(os.getenv('TELEGRAM_BOT_TOKEN'))
 
 async def send_telegram_message(message: str):
     """Send message to Telegram."""
     try:
-        updater.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
     except Exception as e:
         print(f"Error sending Telegram message: {e}")
 
