@@ -7,7 +7,6 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
-    requests \
     ffmpeg \
     libsm6 \
     libxext6 \
@@ -22,6 +21,7 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip3 install --no-cache-dir --upgrade pip && \
     pip3 install --no-cache-dir -r requirements.txt && \
+    pip3 install --no-cache-dir requests && \
     pip3 install --no-cache-dir moviepy==2.0.0
 
 # Copy application files to the container
