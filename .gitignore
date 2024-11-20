@@ -3,7 +3,7 @@
 
 # Ignore the recordings folder
 recordings/
-processed_services/
+processed_services/*
 
 # Ignore Python cache and bytecode files
 __pycache__/
