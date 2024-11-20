@@ -12,9 +12,22 @@ from supabase import create_client, Client
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import logging
+from telegram.ext import Updater
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Telegram bot
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
+
+async def send_telegram_message(message: str):
+    """Send message to Telegram."""
+    try:
+        updater.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    except Exception as e:
+        print(f"Error sending Telegram message: {e}")
 
 
 async def deactivate_unlinked_churches(supabase: Client):
@@ -255,7 +268,7 @@ class ChurchServiceProcessor:
 
     async def send_report_to_subscribers(
         self, 
-        church_id: str,  # Now church_id is the UUID
+        church_id: str,
         church_name: str, 
         date: str, 
         report_path: str,
@@ -275,6 +288,8 @@ class ChurchServiceProcessor:
 
             with open(report_path, 'r', encoding='utf-8') as f:
                 html_content = f.read()
+
+            successful_sends = []  # Track successful email sends
 
             for subscriber in subscribers:
                 email = subscriber['email']
@@ -297,13 +312,26 @@ class ChurchServiceProcessor:
                 if success:
                     print(f"Successfully sent report to {email}")
                     await self.update_subscriber_timestamp(email)
-                    # Record the sermon delivery
                     self.record_sermon_delivery(church_id, subscription_id, sermon_id)
+                    successful_sends.append(email)
                 else:
                     print(f"Failed to send report to {email}: {message}")
 
+            # Send single Telegram message with summary
+            if successful_sends:
+                summary_message = (
+                    f"🎯 Service Report Delivery Summary\n\n"
+                    f"Church: {church_name}\n"
+                    f"Date: {date}\n"
+                    f"Successfully sent to {len(successful_sends)} subscriber(s):\n"
+                    f"📧 {', '.join(successful_sends)}"
+                )
+                await send_telegram_message(summary_message)
+
         except Exception as e:
             print(f"Error sending reports: {e}")
+            error_message = f"❌ Error sending reports for {church_name} on {date}: {str(e)}"
+            await send_telegram_message(error_message)
 
 
     def check_sermon_delivery(self, church_id: str, subscription_id: str, sermon_id: str) -> bool:
