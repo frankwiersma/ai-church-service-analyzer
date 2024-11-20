@@ -43,6 +43,7 @@ ENV NEXT_PUBLIC_SUPABASE_URL=""
 ENV EMAIL_DOMAIN=""
 ENV EMAIL_RECIPIENT=""
 ENV TELEGRAM_BOT_TOKEN=""
+ENV TELEGRAM_CHAT_ID=""
 
 # Create a directory for processed services
 RUN mkdir -p /app/processed_services

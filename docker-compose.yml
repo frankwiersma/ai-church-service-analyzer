@@ -13,6 +13,8 @@ services:
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - EMAIL_DOMAIN=${EMAIL_DOMAIN}
       - EMAIL_RECIPIENT=${EMAIL_RECIPIENT}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     volumes:
       - type: bind
         source: ./processed_services
