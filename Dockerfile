@@ -4,18 +4,22 @@ FROM python:3.10-slim
 # Set the working directory
 WORKDIR /app
 
-# Install cron
+# Install system dependencies first
 RUN apt-get update && apt-get install -y \
     cron \
     ffmpeg \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    python3-dev \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only the necessary files (excluding recordings folder)
+# Install Python packages with specific version for moviepy
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir moviepy==2.0.0 && \
+    pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application files (explicitly exclude recordings)
 COPY jobschedule.py .
