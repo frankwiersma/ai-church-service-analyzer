@@ -20,9 +20,9 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir -r requirements.txt && \
     pip3 install --no-cache-dir requests && \
-    pip3 install --no-cache-dir moviepy==2.0.0
+    pip3 install --no-cache-dir moviepy==1.0.3 numpy>=1.18.1 imageio>=2.5.0 decorator>=4.3.0 tqdm>=4.0.0 Pillow>=7.0.0 scipy>=1.3.0 pydub>=0.23.0 audiofile>=0.0.0 opencv-python>=4.5 && \
+    pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application files to the container
 COPY jobschedule.py .
