@@ -539,7 +539,7 @@ class ChurchServiceProcessor:
                 included = self.last_api_response.get('included', [])
             
             print(f"Looking for media IDs: {media_ids}")
-            print(f"Available included media: {included}")
+            print(f"Available included media")
             
             for media_item in included:
                 if media_item['id'] in media_ids:
