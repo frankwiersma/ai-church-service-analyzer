@@ -1,11 +1,11 @@
-# Dockerfile
+# Use a lightweight Python image
 FROM python:3.10-slim
 
 # Set the working directory
 WORKDIR /app
 
-# Install system dependencies first
-RUN apt-get update && apt-get install -y \
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     ffmpeg \
     libsm6 \
@@ -13,15 +13,17 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     python3-dev \
     gcc \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages with specific version for moviepy
+# Copy Python requirements file first for dependency caching
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir moviepy==2.0.0 && \
-    pip3 install --no-cache-dir -r requirements.txt
 
-# Copy application files (explicitly exclude recordings)
+# Install Python dependencies
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt && \
+    pip3 install --no-cache-dir moviepy==2.0.0
+
+# Copy application files to the container
 COPY jobschedule.py .
 COPY analysis_prompt.txt .
 COPY readme.md .
@@ -41,13 +43,13 @@ ENV EMAIL_DOMAIN=""
 ENV EMAIL_RECIPIENT=""
 ENV TELEGRAM_BOT_TOKEN=""
 
-# Create directory for mounting
+# Create a directory for processed services
 RUN mkdir -p /app/processed_services
 
-# Add crontab file
+# Add crontab file for the job schedule
 RUN echo "0 * * * * cd /app && python jobschedule.py" > /etc/cron.d/jobschedule
 RUN chmod 0644 /etc/cron.d/jobschedule
 RUN crontab /etc/cron.d/jobschedule
 
-# Run cron in the foreground
+# Set the default command to run cron in the foreground
 CMD ["cron", "-f"]
