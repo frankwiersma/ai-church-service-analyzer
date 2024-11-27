@@ -48,10 +48,16 @@ ENV TELEGRAM_CHAT_ID=""
 # Create a directory for processed services
 RUN mkdir -p /app/processed_services
 
-# Add crontab file for the job schedule
-RUN echo "0 * * * * cd /app && python jobschedule.py" > /etc/cron.d/jobschedule
+# **Add executable permissions to the jobschedule.py script**
+RUN chmod +x /app/jobschedule.py
+
+# **Add crontab file for the job schedule with 'root' user and redirect output to a log file**
+RUN echo "0 * * * * root cd /app && python jobschedule.py >> /var/log/cron.log 2>&1" > /etc/cron.d/jobschedule
 RUN chmod 0644 /etc/cron.d/jobschedule
 RUN crontab /etc/cron.d/jobschedule
+
+# **Create the log file to capture cron job output**
+RUN touch /var/log/cron.log
 
 # Set the default command to run cron in the foreground
 CMD ["cron", "-f"]
