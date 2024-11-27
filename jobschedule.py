@@ -896,13 +896,16 @@ def clean_html_report(file_path):
 async def main():
     """Main execution function."""
     try:
+        # Send startup notification
+        await send_telegram_message("🚀 Starting sermon processing script...")
+
         # Initialize processor
         processor = ChurchServiceProcessor()
 
         # Deactivate unlinked active churches
         print("Checking for unlinked active churches...")
         await deactivate_unlinked_churches(processor.supabase)
-
+        
         # Process all churches
         await processor.process_all_churches()
         
