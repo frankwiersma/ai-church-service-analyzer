@@ -52,7 +52,7 @@ RUN mkdir -p /app/processed_services
 RUN chmod +x /app/jobschedule.py
 
 # **Add crontab file for the job schedule with 'root' user and redirect output to a log file**
-RUN echo "0 * * * * root cd /app && python jobschedule.py >> /var/log/cron.log 2>&1" > /etc/cron.d/jobschedule
+RUN echo "0 * * * * root cd /app && python3 jobschedule.py >> /var/log/cron.log 2>&1" > /etc/cron.d/jobschedule
 RUN chmod 0644 /etc/cron.d/jobschedule
 RUN crontab /etc/cron.d/jobschedule
 
