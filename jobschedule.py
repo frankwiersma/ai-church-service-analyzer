@@ -897,7 +897,7 @@ async def main():
     """Main execution function."""
     try:
         # Send startup notification
-        await send_telegram_message("🚀 Starting sermon processing script...")
+        #await send_telegram_message("🚀 Starting sermon processing script...")
 
         # Initialize processor
         processor = ChurchServiceProcessor()
