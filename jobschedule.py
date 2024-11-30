@@ -13,9 +13,16 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import logging
 import telegram
+from azure.storage.blob import BlobServiceClient
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Azure Blob Storage
+AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+container_name = "preeksamenvatting"
+container_client = blob_service_client.get_container_client(container_name)
 
 # Initialize Telegram bot
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -273,7 +280,7 @@ class ChurchServiceProcessor:
         report_path: str,
         sermon_id: str
     ) -> None:
-        """Send report to all subscribers of a church."""
+        """Send report to all subscribers of a church and upload to Azure Blob Storage."""
         try:
             subscribers = await self.get_subscribers(church_id)
             if not subscribers:
@@ -287,6 +294,15 @@ class ChurchServiceProcessor:
 
             with open(report_path, 'r', encoding='utf-8') as f:
                 html_content = f.read()
+
+            # Upload to Azure Blob Storage
+            blob_name = f"{church_name}/{date}/{os.path.basename(report_path)}"
+            blob_client = container_client.get_blob_client(blob_name)
+            
+            with open(report_path, 'rb') as data:
+                blob_client.upload_blob(data, overwrite=True)
+            
+            print(f"Uploaded report to Azure Blob Storage: {blob_name}")
 
             successful_sends = []  # Track successful email sends
 
