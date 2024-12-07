@@ -296,7 +296,7 @@ class ChurchServiceProcessor:
                 html_content = f.read()
 
             # Upload to Azure Blob Storage
-            blob_name = f"{church_name}/{date}/{os.path.basename(report_path)}"
+            blob_name = f"{church_id} - {church_name}/{date}/{os.path.basename(report_path)}"
             blob_client = container_client.get_blob_client(blob_name)
             
             with open(report_path, 'rb') as data:
