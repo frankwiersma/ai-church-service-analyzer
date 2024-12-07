@@ -20,20 +20,10 @@ load_dotenv()
 
 # Initialize Azure Blob Storage
 AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
-if not AZURE_STORAGE_CONNECTION_STRING:
-    print("⚠️ Warning: AZURE_STORAGE_CONNECTION_STRING not found in environment variables")
-    blob_service_client = None
-    container_client = None
-else:
-    try:
-        blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
-        container_name = "preeksamenvatting"
-        container_client = blob_service_client.get_container_client(container_name)
-        print("✅ Successfully connected to Azure Blob Storage")
-    except Exception as e:
-        print(f"❌ Error connecting to Azure Blob Storage: {e}")
-        blob_service_client = None
-        container_client = None
+blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+container_name = "preeksamenvatting"
+container_client = blob_service_client.get_container_client(container_name)
+
 # Initialize Telegram bot
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
@@ -282,102 +272,81 @@ class ChurchServiceProcessor:
             return []
 
 
-async def send_report_to_subscribers(
-    self, 
-    church_id: str,
-    church_name: str, 
-    date: str, 
-    report_path: str,
-    sermon_id: str
-) -> None:
-    """Send report to all subscribers of a church and upload to Azure Blob Storage."""
-    try:
-        # Get subscribers
-        subscribers = await self.get_subscribers(church_id)
-        if not subscribers:
-            print(f"No active subscribers found for church {church_name}")
-            return
-
-        # Initialize email service
-        email_service = EmailService(
-            api_key=os.getenv('SENDGRID_API_KEY'),
-            default_from_domain=os.getenv('EMAIL_DOMAIN', 'preeksamenvatting.nl')
-        )
-
-        # Read HTML content
+    async def send_report_to_subscribers(
+        self, 
+        church_id: str,
+        church_name: str, 
+        date: str, 
+        report_path: str,
+        sermon_id: str
+    ) -> None:
+        """Send report to all subscribers of a church and upload to Azure Blob Storage."""
         try:
+            subscribers = await self.get_subscribers(church_id)
+            if not subscribers:
+                print(f"No active subscribers found for church {church_name}")
+                return
+
+            email_service = EmailService(
+                api_key=os.getenv('SENDGRID_API_KEY'),
+                default_from_domain=os.getenv('EMAIL_DOMAIN', 'preeksamenvatting.nl')
+            )
+
             with open(report_path, 'r', encoding='utf-8') as f:
                 html_content = f.read()
-        except Exception as e:
-            print(f"Error reading report file: {e}")
-            return
 
-        # Upload to Azure Blob Storage if available
-        if container_client:
-            try:
-                blob_name = f"{church_name}/{date}/{os.path.basename(report_path)}"
-                blob_client = container_client.get_blob_client(blob_name)
-                
-                with open(report_path, 'rb') as data:
-                    blob_client.upload_blob(data, overwrite=True)
-                
-                print(f"✅ Uploaded report to Azure Blob Storage: {blob_name}")
-            except Exception as e:
-                print(f"⚠️ Warning: Failed to upload to Azure Blob Storage: {e}")
-        else:
-            print("⚠️ Warning: Azure Blob Storage not available, skipping upload")
-
-        # Track successful email sends
-        successful_sends = []
-
-        # Send to each subscriber
-        for subscriber in subscribers:
-            email = subscriber['email']
-            subscription_id = subscriber['subscription_id']
-
-            # Check if sermon was already sent to this subscriber
-            delivery_exists = self.check_sermon_delivery(church_id, subscription_id, sermon_id)
-            if delivery_exists:
-                print(f"📝 Sermon {sermon_id} already sent to {email}, skipping.")
-                continue
-
-            # Send email
-            print(f"📧 Sending report to {email}...")
-            success, message = await email_service.send_report(
-                html_content=html_content,
-                recipient_email=email,
-                church_name=church_name,
-                date=date
-            )
+            # Upload to Azure Blob Storage
+            blob_name = f"{church_name}/{date}/{os.path.basename(report_path)}"
+            blob_client = container_client.get_blob_client(blob_name)
             
-            if success:
-                print(f"✅ Successfully sent report to {email}")
-                # Update subscriber timestamp
-                await self.update_subscriber_timestamp(email)
-                # Record sermon delivery
-                self.record_sermon_delivery(church_id, subscription_id, sermon_id)
-                successful_sends.append(email)
-            else:
-                print(f"❌ Failed to send report to {email}: {message}")
+            with open(report_path, 'rb') as data:
+                blob_client.upload_blob(data, overwrite=True)
+            
+            print(f"Uploaded report to Azure Blob Storage: {blob_name}")
 
-        # Send summary to Telegram if any successful sends
-        if successful_sends:
-            summary_message = (
-                f"🎯 Service Report Delivery Summary\n\n"
-                f"Church: {church_name}\n"
-                f"Date: {date}\n"
-                f"Successfully sent to {len(successful_sends)} subscriber(s):\n"
-                f"📧 {', '.join(successful_sends)}"
-            )
-            await send_telegram_message(summary_message)
-        else:
-            print("ℹ️ No reports were sent successfully")
+            successful_sends = []  # Track successful email sends
 
-    except Exception as e:
-        error_message = f"❌ Error sending reports for {church_name} on {date}: {str(e)}"
-        print(error_message)
-        await send_telegram_message(error_message)
-        raise  # Re-raise the exception for the caller to handle
+            for subscriber in subscribers:
+                email = subscriber['email']
+                subscription_id = subscriber['subscription_id']
+
+                # Check if the sermon has already been sent to this subscriber
+                delivery_exists = self.check_sermon_delivery(church_id, subscription_id, sermon_id)
+                if delivery_exists:
+                    print(f"Sermon {sermon_id} already sent to {email}, skipping.")
+                    continue
+
+                print(f"Sending report to {email}...")
+                success, message = await email_service.send_report(
+                    html_content=html_content,
+                    recipient_email=email,
+                    church_name=church_name,
+                    date=date
+                )
+                
+                if success:
+                    print(f"Successfully sent report to {email}")
+                    await self.update_subscriber_timestamp(email)
+                    self.record_sermon_delivery(church_id, subscription_id, sermon_id)
+                    successful_sends.append(email)
+                else:
+                    print(f"Failed to send report to {email}: {message}")
+
+            # Send single Telegram message with summary
+            if successful_sends:
+                summary_message = (
+                    f"🎯 Service Report Delivery Summary\n\n"
+                    f"Church: {church_name}\n"
+                    f"Date: {date}\n"
+                    f"Successfully sent to {len(successful_sends)} subscriber(s):\n"
+                    f"📧 {', '.join(successful_sends)}"
+                )
+                await send_telegram_message(summary_message)
+
+        except Exception as e:
+            print(f"Error sending reports: {e}")
+            error_message = f"❌ Error sending reports for {church_name} on {date}: {str(e)}"
+            await send_telegram_message(error_message)
 
 
     def check_sermon_delivery(self, church_id: str, subscription_id: str, sermon_id: str) -> bool:
