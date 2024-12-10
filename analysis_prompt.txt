@@ -45,7 +45,7 @@ _[Hoofdthema]_
 
 🙏 **Gebed en Voorbede**
 • **Hoofdthema's van gebeden:** _[themas]_
-• **Specifieke gebedspunten genoemd:** _[punten]_
+• **Specifieke voorbeden genoemd (vervang namen van mensen voor de gebeden met [geredigeerd]:** _[voorbeden]_
 
 💰 **Collectes**
 • **Doelen van de collectes:** _[doelen]_
