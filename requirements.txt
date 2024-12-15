@@ -6,3 +6,4 @@ sendgrid
 supabase
 requests
 azure-storage-blob
+pytube
