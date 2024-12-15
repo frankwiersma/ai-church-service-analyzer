@@ -625,7 +625,7 @@ class ChurchServiceProcessor:
                 'outtmpl': temp_path_template,
                 'quiet': True,
                 'no_warnings': True,
-                'cookies': 'cookies.txt'
+                'cookies': './cookies.txt'
             }
 
 
