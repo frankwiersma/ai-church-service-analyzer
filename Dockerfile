@@ -30,7 +30,7 @@ COPY analysis_prompt.txt .
 COPY readme.md .
 COPY html_report_prompt.txt .
 COPY .env .
-COPY .cookies.txt .
+COPY cookies.txt .
 
 # Ensure any required environment variables are accessible
 ENV DEEPGRAM_API_KEY=""
