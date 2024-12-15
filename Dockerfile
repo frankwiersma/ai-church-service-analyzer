@@ -44,6 +44,7 @@ ENV EMAIL_DOMAIN=""
 ENV EMAIL_RECIPIENT=""
 ENV TELEGRAM_BOT_TOKEN=""
 ENV TELEGRAM_CHAT_ID=""
+ENV YOUTUBE_API_KEY=""
 
 # Create a directory for processed services
 RUN mkdir -p /app/processed_services

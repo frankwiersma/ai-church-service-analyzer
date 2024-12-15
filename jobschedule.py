@@ -2,7 +2,7 @@ import os
 import json
 import requests
 import asyncio
-from pytube import Channel, YouTube
+from googleapiclient.discovery import build
 from datetime import datetime
 from typing import Dict, Optional
 from moviepy.editor import VideoFileClip
@@ -230,49 +230,78 @@ class ChurchServiceProcessor:
 
     async def get_latest_youtube_service(self, youtube_channel_name: str) -> Optional[Dict]:
         """
-        Fetch the latest available video from the given YouTube channel using pytube Channel.
-        This approach requires a channel URL that pytube can handle (e.g., /c/ or /channel/ format).
+        Fetch the latest available video from the given YouTube channel using the YouTube Data API v3.
+        Requires YOUTUBE_API_KEY in environment variables.
+
+        Steps:
+        1. Convert the youtube_channel_name (handle) into a channel_id by searching for the channel.
+        2. Use the channel_id to find the latest uploaded video.
         """
         try:
-            # Construct the channel URL.
-            # If https://www.youtube.com/@JulianakerkDordrechtGG doesn't work, try:
-            # channel_url = f"https://www.youtube.com/c/{youtube_channel_name}"
-            #
-            # Or if you have a channel ID:
-            # channel_url = "https://www.youtube.com/channel/UCxxxxxxxxxxxxxxx"
-            
-            channel_url = f"https://www.youtube.com/c/{youtube_channel_name}"
-            
-            print(f"Fetching latest YouTube video from: {channel_url}")
-            channel = Channel(channel_url)
+            api_key = os.getenv('YOUTUBE_API_KEY')
+            if not api_key:
+                print("No YOUTUBE_API_KEY found in environment.")
+                return None
 
-            # Check if the channel has videos
-            if not channel.videos:
+            youtube = build('youtube', 'v3', developerKey=api_key)
+
+            # First, resolve the channel_id from the handle (youtube_channel_name)
+            # Searching for the channel by the handle name:
+            search_request = youtube.search().list(
+                part='snippet',
+                q=youtube_channel_name,
+                type='channel',
+                maxResults=1
+            )
+            search_response = search_request.execute()
+
+            if 'items' not in search_response or not search_response['items']:
+                print(f"Could not find a channel for handle: {youtube_channel_name}")
+                return None
+
+            channel_id = search_response['items'][0]['id']['channelId']
+
+            # Now get the latest videos from this channel
+            request = youtube.search().list(
+                part='snippet',
+                channelId=channel_id,
+                maxResults=1,
+                order='date',
+                type='video'
+            )
+            response = request.execute()
+
+            if 'items' not in response or not response['items']:
                 print(f"No videos found for channel {youtube_channel_name}")
                 return None
 
-            # Get the latest uploaded video
-            latest_video = channel.videos[0]
+            video = response['items'][0]
+            video_id = video['id']['videoId']
+            snippet = video['snippet']
+            title = snippet['title']
+            
+            # Attempt to parse publish time into a datetime
+            publish_time_str = snippet.get('publishedAt')
+            if publish_time_str:
+                publish_date = datetime.strptime(publish_time_str, '%Y-%m-%dT%H:%M:%SZ')
+            else:
+                publish_date = datetime.now()
 
-            # Retrieve metadata
-            latest_title = latest_video.title
-            published_date = latest_video.publish_date or datetime.now()
-
-            # Return service data structure compatible with the rest of the code
+            # Construct a service_data-like dict for consistency
             return {
-                'id': latest_video.video_id,
-                'title': latest_title,
-                'date': published_date.strftime('%Y-%m-%d'),
+                'id': video_id,
+                'title': title,
+                'date': publish_date.strftime('%Y-%m-%d'),
                 'raw_data': {
                     'attributes': {
-                        'start_at': published_date.isoformat(),
-                        'title': latest_title
+                        'start_at': publish_date.isoformat(),
+                        'title': title
                     },
                     'relationships': {
                         'media': {
                             'data': [
                                 {
-                                    'id': latest_video.video_id,
+                                    'id': video_id,
                                     'type': 'video'
                                 }
                             ]
@@ -281,12 +310,12 @@ class ChurchServiceProcessor:
                     'included': []
                 },
                 'source': 'youtube',
-                'watch_url': latest_video.watch_url
+                'watch_url': f"https://www.youtube.com/watch?v={video_id}"
             }
 
         except Exception as e:
             print(f"Error fetching latest YouTube video for channel {youtube_channel_name}: {e}")
-            return None    
+            return None
     
     async def fetch_church_ids(self) -> List[Dict[str, str]]:
         """Fetch all active church IDs from Supabase."""
