@@ -233,12 +233,12 @@ class ChurchServiceProcessor:
 
     async def get_latest_youtube_service(self, youtube_channel_name: str) -> Optional[Dict]:
         """
-        Fetch the latest available video from the given YouTube channel using the YouTube Data API v3.
+        Fetch the latest available fully uploaded (non-live) video from the given YouTube channel.
         Requires YOUTUBE_API_KEY in environment variables.
 
         Steps:
         1. Convert the youtube_channel_name (handle) into a channel_id by searching for the channel.
-        2. Use the channel_id to find the latest uploaded video.
+        2. Retrieve multiple recent videos and select the first non-live video.
         """
         try:
             api_key = os.getenv('YOUTUBE_API_KEY')
@@ -249,26 +249,25 @@ class ChurchServiceProcessor:
             youtube = build('youtube', 'v3', developerKey=api_key)
 
             # First, resolve the channel_id from the handle (youtube_channel_name)
-            # Searching for the channel by the handle name:
-            search_request = youtube.search().list(
+            search_channel_request = youtube.search().list(
                 part='snippet',
                 q=youtube_channel_name,
                 type='channel',
                 maxResults=1
             )
-            search_response = search_request.execute()
+            search_channel_response = search_channel_request.execute()
 
-            if 'items' not in search_response or not search_response['items']:
+            if 'items' not in search_channel_response or not search_channel_response['items']:
                 print(f"Could not find a channel for handle: {youtube_channel_name}")
                 return None
 
-            channel_id = search_response['items'][0]['id']['channelId']
+            channel_id = search_channel_response['items'][0]['id']['channelId']
 
-            # Now get the latest videos from this channel
+            # Fetch recent videos - let's get up to 10 and filter
             request = youtube.search().list(
                 part='snippet',
                 channelId=channel_id,
-                maxResults=1,
+                maxResults=10,
                 order='date',
                 type='video'
             )
@@ -278,7 +277,20 @@ class ChurchServiceProcessor:
                 print(f"No videos found for channel {youtube_channel_name}")
                 return None
 
-            video = response['items'][0]
+            # Filter out live or upcoming videos
+            # 'liveBroadcastContent' can be 'live', 'upcoming', or 'none'
+            # We only want videos where it's 'none'.
+            valid_videos = [
+                item for item in response['items']
+                if item['snippet'].get('liveBroadcastContent') == 'none'
+            ]
+
+            if not valid_videos:
+                print("No fully uploaded (non-live) videos found.")
+                return None
+
+            # The first valid video should be the latest fully uploaded one
+            video = valid_videos[0]
             video_id = video['id']['videoId']
             snippet = video['snippet']
             title = snippet['title']
@@ -322,6 +334,7 @@ class ChurchServiceProcessor:
         except Exception as e:
             print(f"Error fetching latest YouTube video for channel {youtube_channel_name}: {e}")
             return None
+
 
     async def fetch_church_ids(self) -> List[Dict[str, str]]:
         """Fetch all active church IDs from Supabase."""
