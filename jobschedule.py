@@ -624,8 +624,10 @@ class ChurchServiceProcessor:
                 'format': 'bestvideo+bestaudio/best',
                 'outtmpl': temp_path_template,
                 'quiet': True,
-                'no_warnings': True
+                'no_warnings': True,
+                'cookies': 'cookies.txt'
             }
+
 
             print("Downloading YouTube video using yt-dlp...")
             loop = asyncio.get_event_loop()
