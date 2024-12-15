@@ -17,7 +17,6 @@ from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import logging
 import telegram
 from azure.storage.blob import BlobServiceClient
-from pytube import YouTube
 
 
 # Load environment variables
@@ -605,21 +604,77 @@ class ChurchServiceProcessor:
             return None
 
     async def _download_youtube_video(self, watch_url: str, output_path: str) -> bool:
-        """Download the latest YouTube video using pytube."""
+        """
+        Download the latest YouTube video using yt-dlp.
+
+        This function uses yt-dlp to download the YouTube video from the given watch URL.
+        The output file could be mp4 or webm (or another format), depending on what yt-dlp 
+        determines is best. After downloading, you can convert it to mp3 if needed.
+        """
+        import yt_dlp
         try:
-            yt = YouTube(watch_url)
-            stream = yt.streams.filter(only_audio=False, file_extension='mp4').order_by('resolution').desc().first()
-            if not stream:
-                print("No suitable stream found for the YouTube video.")
-                return False
-            stream.download(output_path=os.path.dirname(output_path), filename=os.path.basename(output_path))
+            # We'll let yt-dlp decide the best available format.
+            # We use outtmpl to ensure the final downloaded file includes its original extension.
+            # For example: temp_download.%(ext)s might become temp_download.webm or temp_download.mp4.
+            base_dir = os.path.dirname(output_path)
+            base_name = os.path.splitext(os.path.basename(output_path))[0]  # remove .mp4 extension if present
+            temp_path_template = os.path.join(base_dir, f"{base_name}.%(ext)s")
+
+            ydl_opts = {
+                'format': 'bestvideo+bestaudio/best',
+                'outtmpl': temp_path_template,
+                'quiet': True,
+                'no_warnings': True
+            }
+
+            print("Downloading YouTube video using yt-dlp...")
+            loop = asyncio.get_event_loop()
+            # Run yt-dlp in an executor to avoid blocking the event loop
+            def run_yt_dlp():
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([watch_url])
+
+            await loop.run_in_executor(None, run_yt_dlp)
             print("YouTube video download complete")
+
+            # After download, we need to find out the actual file extension used.
+            # The template was temp_download.%(ext)s, so find the downloaded file.
+            downloaded_files = [f for f in os.listdir(base_dir) if f.startswith(base_name + ".") and not f.endswith(".part")]
+            if not downloaded_files:
+                print("No downloaded file found after yt-dlp execution.")
+                return False
+
+            # Normally we should have exactly one file that matches. Pick the first one.
+            downloaded_file = downloaded_files[0]
+            actual_downloaded_path = os.path.join(base_dir, downloaded_file)
+
+            # If the expected output_path differs from actual (e.g., we originally assumed mp4), 
+            # we'll adjust the code that uses this function to handle actual_downloaded_path.
+            # Here we simply rename the file to output_path if it doesn't have the correct extension.
+            # But since the conversion function can handle webm or mp4, we can just return True here
+            # and let the caller handle `actual_downloaded_path`.
+            
+            # If you need the exact final file name, you can rename it to output_path here.
+            # For example, if you want to consistently work with a single known temp filename:
+            # os.rename(actual_downloaded_path, output_path)
+            # And then return the renamed output_path to the caller.
+            # But in current usage, you already pass final_mp3_path separately.
+
+            # We'll store the actual downloaded path in the class or return it if needed.
+            # Since the original code expects output_path as the final downloaded file, let's just
+            # rename it to output_path (overwriting if needed):
+            if actual_downloaded_path != output_path:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                os.rename(actual_downloaded_path, output_path)
+
             return True
         except Exception as e:
-            print(f"Error downloading YouTube video: {e}")
+            print(f"Error downloading YouTube video with yt-dlp: {e}")
             if os.path.exists(output_path):
                 os.remove(output_path)
             return False
+
 
     def _get_download_url(self, service_data: Dict) -> Tuple[Optional[str], Optional[str]]:
         """Extract download URL and file type from service data."""
