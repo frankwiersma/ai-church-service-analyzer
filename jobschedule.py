@@ -2,7 +2,9 @@ import os
 import json
 import requests
 import asyncio
+from pytube import Channel, YouTube
 from datetime import datetime
+from typing import Dict, Optional
 from moviepy.editor import VideoFileClip
 from deepgram import DeepgramClient, PrerecordedOptions
 import google.generativeai as genai
@@ -14,7 +16,6 @@ from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import logging
 import telegram
 from azure.storage.blob import BlobServiceClient
-from pytube import Channel, YouTube
 
 # Load environment variables
 load_dotenv()
@@ -229,25 +230,35 @@ class ChurchServiceProcessor:
 
     async def get_latest_youtube_service(self, youtube_channel_name: str) -> Optional[Dict]:
         """
-        Fetch the latest available video from the given YouTube channel using pytube.
+        Fetch the latest available video from the given YouTube channel using pytube Channel.
+        This approach requires a channel URL that pytube can handle (e.g., /c/ or /channel/ format).
         """
         try:
-            channel_url = f"https://www.youtube.com/@{youtube_channel_name}/videos"
+            # Construct the channel URL.
+            # If https://www.youtube.com/@JulianakerkDordrechtGG doesn't work, try:
+            # channel_url = f"https://www.youtube.com/c/{youtube_channel_name}"
+            #
+            # Or if you have a channel ID:
+            # channel_url = "https://www.youtube.com/channel/UCxxxxxxxxxxxxxxx"
+            
+            channel_url = f"https://www.youtube.com/c/{youtube_channel_name}"
+            
             print(f"Fetching latest YouTube video from: {channel_url}")
-            c = Channel(channel_url)
-            # c.videos is a generator-like object, get the first (latest) video
-            videos = list(c.videos)
-            if not videos:
+            channel = Channel(channel_url)
+
+            # Check if the channel has videos
+            if not channel.videos:
                 print(f"No videos found for channel {youtube_channel_name}")
                 return None
-            latest_video = videos[0]
-            latest_title = latest_video.title
-            published_date = latest_video.publish_date
-            if not published_date:
-                # If publish_date not available, fallback to current date
-                published_date = datetime.now()
 
-            # Construct a service_data-like structure for consistency
+            # Get the latest uploaded video
+            latest_video = channel.videos[0]
+
+            # Retrieve metadata
+            latest_title = latest_video.title
+            published_date = latest_video.publish_date or datetime.now()
+
+            # Return service data structure compatible with the rest of the code
             return {
                 'id': latest_video.video_id,
                 'title': latest_title,
@@ -275,7 +286,7 @@ class ChurchServiceProcessor:
 
         except Exception as e:
             print(f"Error fetching latest YouTube video for channel {youtube_channel_name}: {e}")
-            return None
+            return None    
     
     async def fetch_church_ids(self) -> List[Dict[str, str]]:
         """Fetch all active church IDs from Supabase."""
