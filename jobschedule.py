@@ -17,6 +17,8 @@ from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 import logging
 import telegram
 from azure.storage.blob import BlobServiceClient
+from pytube import YouTube
+
 
 # Load environment variables
 load_dotenv()
