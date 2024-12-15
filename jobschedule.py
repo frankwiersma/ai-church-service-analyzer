@@ -280,11 +280,14 @@ class ChurchServiceProcessor:
             video_id = video['id']['videoId']
             snippet = video['snippet']
             title = snippet['title']
-            
+
             # Attempt to parse publish time into a datetime
             publish_time_str = snippet.get('publishedAt')
             if publish_time_str:
-                publish_date = datetime.strptime(publish_time_str, '%Y-%m-%dT%H:%M:%SZ')
+                # Convert trailing 'Z' to '+00:00' for fromisoformat compatibility
+                if publish_time_str.endswith('Z'):
+                    publish_time_str = publish_time_str[:-1] + '+00:00'
+                publish_date = datetime.fromisoformat(publish_time_str)
             else:
                 publish_date = datetime.now()
 
@@ -317,7 +320,7 @@ class ChurchServiceProcessor:
         except Exception as e:
             print(f"Error fetching latest YouTube video for channel {youtube_channel_name}: {e}")
             return None
-    
+
     async def fetch_church_ids(self) -> List[Dict[str, str]]:
         """Fetch all active church IDs from Supabase."""
         try:
