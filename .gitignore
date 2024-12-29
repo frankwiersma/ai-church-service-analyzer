@@ -1,5 +1,9 @@
 # Ignore environment variables
 .env
+htmlpoc.py
+test.html
+output.md
+extract.py
 
 # Ignore the recordings folder
 recordings/

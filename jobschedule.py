@@ -621,7 +621,7 @@ class ChurchServiceProcessor:
             temp_path_template = os.path.join(base_dir, f"{base_name}.%(ext)s")
 
             ydl_opts = {
-                'format': 'bestvideo+bestaudio/best',
+                'format': 'bestaudio/best',
                 'outtmpl': temp_path_template,
                 'quiet': True,
                 'no_warnings': True,
@@ -789,7 +789,37 @@ class ChurchServiceProcessor:
         except Exception as e:
             print(f"Transcription error: {e}")
             return False
-
+    def _load_church_dictionary(self) -> Dict[str, str]:
+        """Load church-specific word mappings from file."""
+        try:
+            dictionary_path = 'church_dictionary.txt'
+            word_mappings = {}
+            
+            with open(dictionary_path, 'r', encoding='utf-8') as f:
+                section = None
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):  # Skip empty lines and comments
+                        continue
+                        
+                    # Check for section headers
+                    if line.startswith('# '):
+                        section = line[2:].lower()
+                        continue
+                        
+                    # Process word mappings
+                    if '=' in line:
+                        incorrect, correct = line.split('=', 1)
+                        word_mappings[incorrect.strip()] = correct.strip()
+            
+            print(f"Loaded {len(word_mappings)} word mappings from church dictionary")
+            return word_mappings
+        except FileNotFoundError:
+            print("Church dictionary file not found, continuing without word mappings")
+            return {}
+        except Exception as e:
+            print(f"Error loading church dictionary: {e}")
+            return {}
     async def _generate_analysis(self, transcript_path: str, output_path: str, church_name: str, date: str) -> bool:
         """Generate analysis using Gemini."""
         print("Generating analysis...")
@@ -797,11 +827,16 @@ class ChurchServiceProcessor:
             with open(transcript_path, 'r', encoding='utf-8') as f:
                 transcript = f.read()
 
+            # Apply word mappings to transcript
+            processed_transcript = transcript
+            for incorrect, correct in self.church_dictionary.items():
+                processed_transcript = processed_transcript.replace(incorrect, correct)
+
             prompt = self._load_prompt('analysis_prompt.txt')
             if not prompt:
                 return False
 
-            prompt_with_context = f"Church: {church_name}\nDate: {date}\n\n{prompt}\n\nTranscript:\n{transcript}"
+            prompt_with_context = f"Church: {church_name}\nDate: {date}\n\n{prompt}\n\nTranscript:\n{processed_transcript}"
 
             result = await asyncio.get_event_loop().run_in_executor(
                 None,

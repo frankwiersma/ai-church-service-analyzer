@@ -1,0 +1,67 @@
+# Church-specific word mappings
+# Format: incorrect_word=correct_word
+# One mapping per line, lines starting with # are comments
+
+outlink=ouderling
+Diocanaat=Diaconaat
+Diocanaat=Diaconie
+kerkrentmeesterlijk=kerkrentmeesterlijk
+Diocanaat=diaconie
+Kerker=Kerk
+meester=rentmeester
+kerken=kerk
+meesterlijkbeheer=rentmeesterlijk beheer
+meestersbeheer=rentmeesterlijk beheer
+kerknet=kerkrentmeester
+Theo=Teeuw
+meesterlijk=rentmeesterlijk
+pastoor=pastor
+censureboun=censuurbaan
+kerkvoogdij=kerkvoogdij
+Poponent=proponent
+proponent=proponent
+prospondent=proponent
+prediker=predikant
+predikant=dominee
+scria=scriba
+Outling=Ouderling
+Dioconie=Diaconie
+Diocontie=Diaconie
+Diaconie=Diaconie
+Diakonie=Diaconie
+Diaconie=Diaconie
+Diokedie=Diaconie
+kerkoogdij=kerkvoogdij
+Kerkeraad=Kerkenraad
+kerstel=kerststol
+advenskaas=adventskaars
+kerkrentmeester=Kerkrentmeester
+Hiërarchie=Diaconie
+Audijaarsavond=Oudjaarsavond
+Sliederrecht=Sliedrecht
+kerkenwerk=kerkenwerk
+Collectie=collecte
+Oegsgeest=Oegstgeest
+SaintPos=Seinpost
+Rut=Ruth
+Familie baas=Familie Baas
+Kerkreinmeesterlijk=Kerkrentmeesterlijk
+Krijevelt=Kraaijeveld
+JKJU=IKJU
+Meeuwuse=Meeuwse
+Alblward=Alblasserwaard
+Teel=Teeuw
+VBOKK=VBOK
+VBUOQA=VBOK
+ongehocumenteerden=ongedocumenteerden
+
+# Common church terms and abbreviations
+NGK=Nederlandse Gereformeerde Kerk
+PKN=Protestantse Kerk in Nederland
+GZB=Gereformeerde Zendingsbond
+HHK=Hersteld Hervormde Kerk
+VGKN=Verenigde Gereformeerde Kerken Nederland
+CGK=Christelijke Gereformeerde Kerken
+
+
+
