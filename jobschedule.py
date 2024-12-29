@@ -749,19 +749,41 @@ class ChurchServiceProcessor:
     async def _convert_to_mp3(self, mp4_path: str, mp3_path: str) -> None:
         """Convert MP4 to MP3 using moviepy."""
         try:
-            video = VideoFileClip(mp4_path)
+            # Add fps parameter and disable audio fps warning
+            video = VideoFileClip(mp4_path, fps_source='fps')
+            if video.audio is None:
+                raise ValueError("No audio track found in video")
+                
             audio = video.audio
             await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: audio.write_audiofile(mp3_path, verbose=False, logger=None)
             )
-            video.close()
+            # Ensure proper cleanup
             audio.close()
+            video.close()
+            
         except Exception as e:
             print(f"Error converting to MP3: {e}")
             if os.path.exists(mp3_path):
                 os.remove(mp3_path)
-            raise
+            # Try alternative conversion using ffmpeg directly if moviepy fails
+            try:
+                print("Attempting alternative conversion using ffmpeg...")
+                import subprocess
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: subprocess.run([
+                        'ffmpeg', '-i', mp4_path, 
+                        '-vn', '-acodec', 'libmp3lame', 
+                        '-y', mp3_path
+                    ], check=True, capture_output=True)
+                )
+                print("Alternative conversion successful")
+                return
+            except Exception as ffmpeg_error:
+                print(f"Alternative conversion also failed: {ffmpeg_error}")
+                raise
 
     async def _transcribe_audio(self, audio_path: str, output_path: str) -> bool:
         """Transcribe audio using Deepgram."""
