@@ -31,6 +31,7 @@ COPY readme.md .
 COPY html_report_prompt.txt .
 COPY .env .
 COPY cookies.txt .
+COPY church_dictionary.txt .
 
 # Ensure any required environment variables are accessible
 ENV DEEPGRAM_API_KEY=""
