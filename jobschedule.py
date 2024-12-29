@@ -167,6 +167,9 @@ class ChurchServiceProcessor:
         # Store last API response for media lookup
         self.last_api_response = None
 
+        # Load church dictionary
+        self.church_dictionary = self._load_church_dictionary()
+
     def _create_service_directory(self, service_data: Dict, church_id: str, church_name: str) -> ServiceDirectory:
         """Create and return path to service directory with new structure."""
         date = datetime.strptime(
