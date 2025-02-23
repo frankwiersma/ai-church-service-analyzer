@@ -162,7 +162,7 @@ class ChurchServiceProcessor:
         # Initialize AI services
         self.deepgram = DeepgramClient(self.deepgram_key)
         genai.configure(api_key=self.gemini_key)
-        self.gemini = genai.GenerativeModel('gemini-1.5-flash-8b')
+        self.gemini = genai.GenerativeModel('gemini-1.5-flash')
 
         # Store last API response for media lookup
         self.last_api_response = None
@@ -1027,7 +1027,7 @@ def generate_html_report(html_report_filename, church_name, date, analysis_conte
         prompt = f"Church: {church_name}\nDate: {date}\n\nAnalysis Content:\n{analysis_content}\n\n{prompt_template}"
         
         genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-        model = genai.GenerativeModel('gemini-1.5-flash-8b')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         result = model.generate_content(prompt)
         
         if result and result.text:
